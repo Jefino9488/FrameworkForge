@@ -155,8 +155,6 @@ fun ConfigScreen(
                         inactiveContentColor = AppColors.TextSecondary
                     )
                 ) {
-                    Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text("Auto Extract")
                 }
                 SegmentedButton(
@@ -170,8 +168,6 @@ fun ConfigScreen(
                         inactiveContentColor = AppColors.TextSecondary
                     )
                 ) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
                     Text("Manual Select")
                 }
             }

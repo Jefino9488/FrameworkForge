@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jefino.frameworkforge.model.DeviceInfo
 import com.jefino.frameworkforge.ui.theme.AppColors
+import androidx.compose.foundation.basicMarquee
 
 @Composable
 fun DeviceInfoCard(
@@ -98,7 +99,7 @@ fun DeviceInfoCard(
             ) {
                 InfoItem(label = "Android", value = deviceInfo.androidVersion)
                 InfoItem(label = "API Level", value = deviceInfo.apiLevel.toString())
-                InfoItem(label = "Version", value = deviceInfo.versionName.take(12))
+                InfoItem(label = "Version", value = deviceInfo.versionName, useMarquee = true)
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -125,7 +126,7 @@ fun DeviceInfoCard(
 }
 
 @Composable
-private fun InfoItem(label: String, value: String) {
+private fun InfoItem(label: String, value: String, useMarquee: Boolean = false) {
     Column(horizontalAlignment = Alignment.Start) {
         Text(
             text = label,
@@ -136,7 +137,9 @@ private fun InfoItem(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
-            color = AppColors.TextPrimary
+            color = AppColors.TextPrimary,
+            maxLines = 1,
+            modifier = if (useMarquee) Modifier.basicMarquee() else Modifier
         )
     }
 }
