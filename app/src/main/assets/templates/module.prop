@@ -1,0 +1,15 @@
+id=mod_frameworks
+name=Framework Patch V2
+version=1.0.0
+versionCode=1.0.0
+author=Jᴇғɪɴᴏ
+description=Framework patcher compatible with Magisk, KernelSU (KSU), and SUFS. Patched using jefino9488.github.io/FrameworkPatcherV2
+minMagisk=20400
+ksu=1
+minKsu=10904
+sufs=1
+minSufs=10000
+minApi=34
+maxApi=34
+requireReboot=true
+support=https://t.me/Jefino9488
