@@ -306,7 +306,7 @@ object RootManager {
      */
     fun getManagerPackageName(): String? {
         return when (getRootManagerType()) {
-            RootManagerType.KERNELSU -> "me.weishu.kernelsu"
+            RootManagerType.KERNELSU -> "vaumet.ndfdvv.ztmdui"
             RootManagerType.APATCH -> "me.bmax.apatch" // Common package name, but might vary
             RootManagerType.MAGISK -> "com.topjohnwu.magisk"
             RootManagerType.UNKNOWN -> "com.topjohnwu.magisk" // Default to Magisk

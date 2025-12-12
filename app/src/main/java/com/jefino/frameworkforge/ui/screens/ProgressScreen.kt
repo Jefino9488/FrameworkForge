@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.content.ClipData
 import android.content.Intent
 import androidx.core.content.FileProvider
 import androidx.compose.ui.platform.LocalContext
@@ -143,9 +144,13 @@ fun ProgressScreen(
                             )
                             val intent = Intent(Intent.ACTION_VIEW).apply {
                                 setDataAndType(uri, "application/zip")
-                                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                clipData = ClipData.newRawUri(null, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                                 RootManager.getManagerPackageName()?.let { pkg ->
                                     setPackage(pkg)
+                                    context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                                 }
                             }
                             context.startActivity(intent)
@@ -171,9 +176,13 @@ fun ProgressScreen(
                                     )
                                     val intent = Intent(Intent.ACTION_VIEW).apply {
                                         setDataAndType(uri, "application/zip")
-                                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        clipData = ClipData.newRawUri(null, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                                         RootManager.getManagerPackageName()?.let { pkg ->
                                             setPackage(pkg)
+                                            context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                                         }
                                     }
                                     context.startActivity(intent)
