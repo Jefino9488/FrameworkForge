@@ -312,4 +312,33 @@ object RootManager {
             RootManagerType.UNKNOWN -> "com.topjohnwu.magisk" // Default to Magisk
         }
     }
+
+    /**
+     * Moves a file to the public Downloads folder using root access
+     */
+    suspend fun moveToDownloads(sourceFile: File, destName: String): Result<File> = withContext(Dispatchers.IO) {
+        try {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val destFile = File(downloadsDir, destName)
+            
+            // ensuring destination directory exists (though /sdcard/Download should always exist)
+            // but just in case
+            
+            val result = Shell.cmd(
+                "cp \"${sourceFile.absolutePath}\" \"${destFile.absolutePath}\"",
+                "chmod 666 \"${destFile.absolutePath}\"", // World readable/writable
+                "chown 0:9997 \"${destFile.absolutePath}\"" // root:everybody - standard for shared storage
+            ).exec()
+
+            if (result.isSuccess) {
+                // Delete source if copy was successful
+                sourceFile.delete()
+                Result.success(destFile)
+            } else {
+                 Result.failure(Exception("Failed to move file: ${result.err.joinToString()}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

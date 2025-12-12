@@ -46,6 +46,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
 import com.jefino.frameworkforge.data.api.GitHubRelease
 import com.jefino.frameworkforge.model.PatchingState
 import com.jefino.frameworkforge.ui.components.DeviceInfoCard
@@ -68,6 +71,13 @@ fun DashboardScreen(
     val patchingState by viewModel.patchingState.collectAsState()
     val matchingReleases by viewModel.matchingReleases.collectAsState()
     val isLoadingReleases by viewModel.isLoadingReleases.collectAsState()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        // Proceed regardless of result - repository has fallback logic
+        // But we want to try getting permission first
+    }
 
     val isLoading = patchingState is PatchingState.CheckingRoot || patchingState is PatchingState.Scanning
 
@@ -172,6 +182,7 @@ fun DashboardScreen(
                     releases = matchingReleases,
                     isLoading = isLoadingReleases,
                     onDownloadClick = { release ->
+                        permissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                         viewModel.downloadAndInstallRelease(release)
                         onNavigateToProgress()
                     },

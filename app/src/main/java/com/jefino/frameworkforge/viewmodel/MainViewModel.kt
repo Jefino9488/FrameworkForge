@@ -419,4 +419,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshDeviceInfo() {
         checkRootAndScan()
     }
+
+    /**
+     * Install module directly using root shell commands (fallback for permission issues)
+     */
+    fun installModuleDirectly(modulePath: String) {
+        viewModelScope.launch {
+            try {
+                _patchingState.value = PatchingState.Installing
+                addLog(LogTag.INSTALL, "Installing module directly via root...")
+
+                val result = RootManager.installMagiskModule(modulePath)
+
+                result.fold(
+                    onSuccess = {
+                        addLog(LogTag.SUCCESS, "Module installed successfully!")
+                        _patchingState.value = PatchingState.Success
+                    },
+                    onFailure = { error ->
+                        addLog(LogTag.ERROR, "Installation failed: ${error.message}")
+                        _patchingState.value = PatchingState.Error(error.message ?: "Installation failed", recoverable = true)
+                    }
+                )
+            } catch (e: Exception) {
+                addLog(LogTag.ERROR, "Error: ${e.message}")
+                _patchingState.value = PatchingState.Error(e.message ?: "Unknown error", recoverable = true)
+            }
+        }
+    }
 }

@@ -39,7 +39,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.content.ClipData
 import android.content.Intent
-import androidx.core.content.FileProvider
+import android.net.Uri
+import android.os.StrictMode
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import java.io.File
@@ -132,75 +133,29 @@ fun ProgressScreen(
                     )
                 }
                 is PatchingState.ReadyToInstall -> {
-                    val context = LocalContext.current
-                    
-                    LaunchedEffect(Unit) {
-                        try {
-                            val file = File(state.filePath)
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.provider",
-                                file
-                            )
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "application/zip")
-                                clipData = ClipData.newRawUri(null, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                                RootManager.getManagerPackageName()?.let { pkg ->
-                                    setPackage(pkg)
-                                    context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                                }
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            // Fallback or ignore
-                        }
-                    }
-
                     Column {
                         StatusBanner(
                             title = "Download Complete",
-                            subtitle = "Please complete installation in your Root Manager"
+                            subtitle = "Module saved to Downloads folder"
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
                         Button(
                             onClick = {
-                                try {
-                                    val file = File(state.filePath)
-                                    val uri = FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.provider",
-                                        file
-                                    )
-                                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                                        setDataAndType(uri, "application/zip")
-                                        clipData = ClipData.newRawUri(null, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                        addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                                        RootManager.getManagerPackageName()?.let { pkg ->
-                                            setPackage(pkg)
-                                            context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            context.grantUriPermission(pkg, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                                        }
-                                    }
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    // Ignore
-                                }
+                                viewModel.installModuleDirectly(state.filePath)
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = AppColors.Primary)
                         ) {
-                            Text("Open Root Manager Again")
+                            Text("Install Module")
                         }
-                         Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
                             onClick = onComplete,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Done")
+                            Text("Cancel")
                         }
                     }
                 }

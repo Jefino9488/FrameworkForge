@@ -14,6 +14,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import com.jefino.frameworkforge.core.RootManager
 
 /**
  * Repository for workflow operations and release management
@@ -213,40 +215,79 @@ class WorkflowRepository {
                 Exception("Empty response body")
             )
 
-            // Use public Downloads directory
+            // Try public Downloads directory first
             val downloadDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
             downloadDir.mkdirs()
             val destinationFile = File(downloadDir, fileName)
-
+            
             val contentLength = body.contentLength()
-            var bytesWritten = 0L
-            var lastProgress = -1
 
-            body.byteStream().use { inputStream ->
-                FileOutputStream(destinationFile).use { outputStream ->
-                    val buffer = ByteArray(8192)
-                    var read: Int
-
-                    while (inputStream.read(buffer).also { read = it } != -1) {
-                        outputStream.write(buffer, 0, read)
-                        bytesWritten += read
-
-                        if (contentLength > 0) {
-                            val progress = ((bytesWritten * 100) / contentLength).toInt()
-                            if (progress != lastProgress) {
-                                lastProgress = progress
-                                onProgress?.invoke(progress)
-                            }
-                        }
+            try {
+                // Attempt direct write
+                downloadToStream(body, destinationFile, contentLength, onProgress)
+                Result.success(destinationFile)
+            } catch (e: Exception) {
+                // Check if it's a permission issue (common on Android 11+)
+                val isPermissionIssue = e is java.io.FileNotFoundException && (e.message?.contains("EACCES") == true || e.message?.contains("Permission denied") == true) || e is SecurityException
+                
+                if (isPermissionIssue && RootManager.isRootAvailable()) {
+                    // Fallback: Download to cache then move with root
+                    val cacheDir = File(context.cacheDir, "temp_download")
+                    cacheDir.mkdirs()
+                    val tempFile = File(cacheDir, fileName)
+                    
+                    // Re-request because body stream is consumed/closed
+                    val newResponse = downloadClient.newCall(request.newBuilder().build()).execute()
+                    val newBody = newResponse.body ?: throw Exception("Empty body on retry")
+                    
+                    downloadToStream(newBody, tempFile, newBody.contentLength(), onProgress)
+                    
+                    // Move using root
+                    val moveResult = RootManager.moveToDownloads(tempFile, fileName)
+                    if (moveResult.isSuccess) {
+                        Result.success(moveResult.getOrThrow())
+                    } else {
+                        Result.failure(Exception("Download successful but failed to move file to Downloads: ${moveResult.exceptionOrNull()?.message}"))
                     }
+                } else {
+                    throw e
                 }
             }
-
-            Result.success(destinationFile)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
+
+    private fun downloadToStream(
+        body: okhttp3.ResponseBody,
+        file: File,
+        contentLength: Long,
+        onProgress: ((Int) -> Unit)?
+    ) {
+        var bytesWritten = 0L
+        var lastProgress = -1
+
+        body.byteStream().use { inputStream ->
+            FileOutputStream(file).use { outputStream ->
+                val buffer = ByteArray(8192)
+                var read: Int
+
+                while (inputStream.read(buffer).also { read = it } != -1) {
+                    outputStream.write(buffer, 0, read)
+                    bytesWritten += read
+
+                    if (contentLength > 0) {
+                        val progress = ((bytesWritten * 100) / contentLength).toInt()
+                        if (progress != lastProgress) {
+                            lastProgress = progress
+                            onProgress?.invoke(progress)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 
     /**
      * Overload for backward compatibility
