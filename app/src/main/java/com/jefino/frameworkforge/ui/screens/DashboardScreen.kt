@@ -143,14 +143,14 @@ fun DashboardScreen(
             ) {
                 Column {
                     Text(
-                        text = "Cloud Framework Patcher",
+                        text = "Framework Patcher",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = AppColors.TextPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Extract, patch, and install framework modifications",
+                        text = "Patch and modify system frameworks",
                         style = MaterialTheme.typography.bodyMedium,
                         color = AppColors.TextSecondary
                     )
@@ -233,7 +233,7 @@ fun DashboardScreen(
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isRootAvailable) "Configure & Start Patching" else "Manual Mode - Select Files",
+                            text = "Configure Patching",
                             fontWeight = FontWeight.SemiBold
                         )
                     }

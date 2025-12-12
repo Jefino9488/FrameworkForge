@@ -172,13 +172,13 @@ fun ConfigScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = if (patchingMode == PatchingMode.AUTO_EXTRACT) {
-                    if (isRootAvailable) "Files will be extracted from /system using root" 
-                    else "Root access required for auto extraction"
+                    if (isRootAvailable) "Extract from /system using root" 
+                    else "Root required"
                 } else {
-                    "Select JAR files from your device storage"
+                    "Select files manually"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = AppColors.TextSecondary
@@ -287,7 +287,7 @@ fun ConfigScreen(
             ) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
                 Text(
-                    text = "Start Cloud Patching",
+                    text = "Start Patching",
                     modifier = Modifier.padding(vertical = 8.dp),
                     fontWeight = FontWeight.SemiBold
                 )

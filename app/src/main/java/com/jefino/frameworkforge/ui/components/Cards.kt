@@ -118,7 +118,7 @@ fun DeviceInfoCard(
                 FileChip("framework.jar", deviceInfo.hasFrameworkJar)
                 FileChip("services.jar", deviceInfo.hasServicesJar)
                 if (deviceInfo.hasMiuiServicesJar) {
-                    FileChip("miui-services", true)
+                    FileChip("miui-services.jar", true)
                 }
             }
         }
