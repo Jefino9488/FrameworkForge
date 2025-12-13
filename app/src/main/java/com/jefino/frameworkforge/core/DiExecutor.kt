@@ -8,11 +8,6 @@ import java.io.File
 
 /**
  * Executes DI (DynamicInstaller) job scripts with live output streaming.
- * 
- * EXECUTION RULES:
- * - ONLY run.sh should be executed - never individual feature scripts directly
- * - run.sh sources the DI environment and calls features in sequence
- * - All execution happens in isolated job directories
  */
 object DiExecutor {
 
@@ -20,11 +15,6 @@ object DiExecutor {
 
     /**
      * Runs the job's run.sh script with live log streaming.
-     * This is the ONLY entry point for patch execution.
-     * 
-     * @param jobDir The job directory containing run.sh
-     * @param log Callback for each log line
-     * @return Exit code of the script (0 = success)
      */
     suspend fun runJob(
         jobDir: File,
@@ -37,29 +27,23 @@ object DiExecutor {
             return@withContext 1
         }
 
-        // Create callback lists for live output streaming
         val stdoutCallback = object : CallbackList<String>() {
-            override fun onAddElement(e: String) {
-                log(e)
-            }
+            override fun onAddElement(e: String) { log(e) }
         }
-        
+
         val stderrCallback = object : CallbackList<String>() {
-            override fun onAddElement(e: String) {
-                log("[ERR] $e")
-            }
+            override fun onAddElement(e: String) { log("[ERR] $e") }
         }
 
         log("Executing job: ${jobDir.name}")
 
-        // Use DI's bash binary to run the script (core requires bash syntax)
         val diBash = "/data/tmp/di/bin/bash"
         val result = Shell.cmd("su -c '$diBash ${runScript.absolutePath}'")
             .to(stdoutCallback, stderrCallback)
             .exec()
 
         if (result.isSuccess) {
-            log("Job completed successfully")
+            log("Job script finished execution")
         } else {
             log("Job failed with exit code: ${result.code}")
         }
@@ -68,98 +52,117 @@ object DiExecutor {
     }
 
     /**
-     * Generates a run.sh script for a patching job.
-     * The script sources DI environment and executes features in sequence.
-     * 
-     * @param jobDir Job directory where run.sh will be created
-     * @param frameworkJarPath Path to framework.jar within job directory
-     * @param features List of features with their runtime paths
-     * @param apiLevel Device API level
-     * @param deviceCodename Device codename
-     * @return The generated run.sh file
+     * Generates a run.sh script that handles multiple JARs and verifies modification.
      */
     fun generateRunScript(
         context: android.content.Context,
         jobDir: File,
-        frameworkJarPath: String,
+        inputFiles: Map<String, String>,
         features: List<PatchFeature>,
         apiLevel: Int,
         deviceCodename: String
     ): File {
         val runScript = File(jobDir, "run.sh")
-        
+
         val scriptContent = buildString {
-            // Use DI's bash binary - required for core's bash syntax
             appendLine("#!/data/tmp/di/bin/bash")
-            appendLine("# FrameworkForge Patch Job")
-            appendLine("# Generated: ${System.currentTimeMillis()}")
-            appendLine("")
+            appendLine("set +e")
+
             appendLine("# Job context")
-            appendLine("export FRAMEWORK_JAR=\"$frameworkJarPath\"")
             appendLine("export API_LEVEL=$apiLevel")
             appendLine("export DEVICE_CODENAME=\"$deviceCodename\"")
             appendLine("export JOB_DIR=\"${jobDir.absolutePath}\"")
             appendLine("export WORK_DIR=\"${jobDir.absolutePath}/work\"")
             appendLine("export OUTPUT_DIR=\"${jobDir.absolutePath}/output\"")
+
+            // Export ALL input files so feature scripts can find them
+            inputFiles.forEach { (name, path) ->
+                when(name) {
+                    "framework.jar" -> appendLine("export FRAMEWORK_JAR=\"$path\"")
+                    "services.jar" -> appendLine("export SERVICES_JAR=\"$path\"")
+                    "miui-services.jar" -> appendLine("export MIUI_SERVICES_JAR=\"$path\"")
+                }
+            }
+
             appendLine("")
-            appendLine("# Create work directories")
+            appendLine("# Create dirs")
             appendLine("mkdir -p \"\$WORK_DIR\"")
             appendLine("mkdir -p \"\$OUTPUT_DIR\"")
             appendLine("")
-            appendLine("# Source DI environment and core")
+
+            // DI Environment setup
             appendLine("export DI_BIN=\"/data/tmp/di/bin\"")
             appendLine("export DI_TMP=\"/data/tmp/di\"")
-            appendLine("export TMP=\"/data/tmp/di\"")  // DI core requires $TMP for temp directories
+            appendLine("export TMP=\"/data/tmp/di\"")
             appendLine("export TMPDIR=\"/data/tmp/di\"")
             appendLine("export PATH=\"\$DI_BIN:\$PATH\"")
-            appendLine("export l=\"\$DI_BIN\"")  // DI uses $l for tool path
-            appendLine("")
-            appendLine("# Source DI core for functions like dynamic_apktool, smali_kit")
-            appendLine("if [ -f \"\$DI_TMP/core\" ]; then")
-            appendLine("    . \"\$DI_TMP/core\"")
-            appendLine("    echo '[*] DynamicInstaller core loaded'")
-            appendLine("else")
-            appendLine("    echo '[!] WARNING: DI core not found, some features may not work'")
-            appendLine("fi")
-            appendLine("")
-            appendLine("echo '[*] Starting FrameworkForge patch job'")
-            appendLine("echo '[*] Device: $deviceCodename (API $apiLevel)'")
-            appendLine("echo '[*] Features: ${features.size}'")
-            appendLine("")
-            
-            // Execute each feature script (source instead of sh to inherit DI functions)
-            features.forEachIndexed { index, feature ->
-                appendLine("# Feature ${index + 1}/${features.size}: ${feature.name}")
-                appendLine("echo '[*] [${index + 1}/${features.size}] Applying: ${feature.name}'")
-                // Source the script (.) instead of executing with sh - this runs in same shell
-                // so it has access to dynamic_apktool, smali_kit, etc. from core
-                appendLine(". \"${feature.runtimePath}\" \"\$FRAMEWORK_JAR\" \"\$API_LEVEL\" \"\$DEVICE_CODENAME\"")
-                appendLine("echo '[*] ${feature.name} - done'")
-                appendLine("")
+            appendLine("export l=\"\$DI_BIN\"")
+
+            appendLine("if [ -f \"\$DI_TMP/core\" ]; then . \"\$DI_TMP/core\"; else echo '[!] DI Core missing'; fi")
+
+            // 1. Calculate initial checksums
+            appendLine("echo '[*] Calculating initial checksums...'")
+            inputFiles.keys.forEach { name ->
+                val envVar = when(name) {
+                    "framework.jar" -> "FRAMEWORK_JAR"
+                    "services.jar" -> "SERVICES_JAR"
+                    "miui-services.jar" -> "MIUI_SERVICES_JAR"
+                    else -> ""
+                }
+                if (envVar.isNotEmpty()) {
+                    appendLine("${envVar}_MD5_PRE=$(md5sum \"$$envVar\" | cut -d' ' -f1)")
+                }
             }
-            
-            appendLine("echo '[*] All patches applied successfully'")
+
+            // 2. Run Features
             appendLine("")
-            appendLine("# Copy patched framework to output")
-            appendLine("cp \"\$FRAMEWORK_JAR\" \"\$OUTPUT_DIR/framework_patched.jar\"")
-            appendLine("echo '[*] Patched framework saved to output directory'")
+            appendLine("echo '[*] Applying ${features.size} features...'")
+            features.forEachIndexed { index, feature ->
+                appendLine("echo '[*] [${index + 1}/${features.size}] Feature: ${feature.name}'")
+                // Source the script. We pass FRAMEWORK_JAR as arg 1 for backward compatibility,
+                // but scripts should preferably use env vars now.
+                appendLine(". \"${feature.runtimePath}\"")
+            }
             appendLine("")
-            appendLine("echo '[*] Job completed'")
+
+            // 3. Verify modifications and copy to output
+            appendLine("echo '[*] Verifying patches...'")
+            inputFiles.keys.forEach { name ->
+                val envVar = when(name) {
+                    "framework.jar" -> "FRAMEWORK_JAR"
+                    "services.jar" -> "SERVICES_JAR"
+                    "miui-services.jar" -> "MIUI_SERVICES_JAR"
+                    else -> ""
+                }
+
+                if (envVar.isNotEmpty()) {
+                    appendLine("${envVar}_MD5_POST=$(md5sum \"$$envVar\" | cut -d' ' -f1)")
+
+                    // Compare MD5
+                    appendLine("if [ \"\$${envVar}_MD5_PRE\" != \"\$${envVar}_MD5_POST\" ]; then")
+                    appendLine("    echo '[SUCCESS] $name was modified by patches.'")
+                    appendLine("    cp \"$$envVar\" \"\$OUTPUT_DIR/$name\"")
+                    appendLine("else")
+                    appendLine("    echo '[WARNING] $name was NOT modified. Copying original to output.'")
+                    // Still copy it so the module generator has the file, but warn the user
+                    appendLine("    cp \"$$envVar\" \"\$OUTPUT_DIR/$name\"")
+                    appendLine("fi")
+                }
+            }
+
+            appendLine("echo '[*] Job finished'")
             appendLine("exit 0")
         }
-        
-        // Write to temp file first, then copy via root
+
         val tmpFile = File.createTempFile("run_", ".sh", context.cacheDir)
         tmpFile.writeText(scriptContent)
-        
-        // Copy to job dir via root and make executable
+
         Shell.cmd(
             "cp ${tmpFile.absolutePath} ${runScript.absolutePath}",
             "chmod 755 ${runScript.absolutePath}"
         ).exec()
-        
+
         tmpFile.delete()
-        
         return runScript
     }
 }

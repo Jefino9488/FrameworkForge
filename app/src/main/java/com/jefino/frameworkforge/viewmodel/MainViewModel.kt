@@ -556,16 +556,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _patchingState.value = PatchingState.Error("No features selected", recoverable = true)
                     return@launch
                 }
-                
+
                 // Collect all unique required JARs from enabled features
                 val requiredJars = enabledFeatures.flatMap { it.requiredJars }.distinct()
                 addLog(LogTag.INFO, "Starting local patching workflow...")
                 addLog(LogTag.INFO, "Required JARs: ${requiredJars.joinToString(", ")}")
-                
+
                 // Step 1: Extract or copy only the required framework files
                 val extractedFiles = when (_patchingMode.value) {
                     PatchingMode.AUTO_EXTRACT -> {
-                        // Check if required JARs are available
                         requiredJars.forEach { jar ->
                             val available = when (jar) {
                                 "framework.jar" -> info.hasFrameworkJar
@@ -617,7 +616,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Step 3: Deploy feature scripts to safe runtime directory
                 addLog(LogTag.PATCH, "Deploying feature scripts...")
                 val enabledFeatureIds = enabledFeatures.map { it.id }
-                
+
                 val featureScripts = withContext(Dispatchers.IO) {
                     FeatureManager.getEnabledScripts(context, enabledFeatureIds)
                 }
@@ -638,33 +637,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 
                 withContext(Dispatchers.IO) {
                     Shell.cmd(
-                        "mkdir -p ${jobDir.absolutePath}/input",
-                        "mkdir -p ${jobDir.absolutePath}/work",
-                        "mkdir -p ${jobDir.absolutePath}/output",
-                        "chmod -R 755 ${jobDir.absolutePath}"
+                        "mkdir -p ${jobDir!!.absolutePath}/input",
+                        "mkdir -p ${jobDir!!.absolutePath}/work",
+                        "mkdir -p ${jobDir!!.absolutePath}/output",
+                        "chmod -R 755 ${jobDir!!.absolutePath}"
                     ).exec()
                 }
 
-                // Copy framework.jar to job input directory
-                val frameworkSource = extractedFiles["framework.jar"]
-                    ?: throw Exception("framework.jar not found in extracted files")
-                
-                val frameworkJobPath = "${jobDir.absolutePath}/input/framework.jar"
-                
-                withContext(Dispatchers.IO) {
-                    Shell.cmd("cp ${frameworkSource.absolutePath} $frameworkJobPath").exec()
+                // Copy ALL extracted files to job input directory
+                val jobInputFiles = mutableMapOf<String, String>()
+
+                extractedFiles.forEach { (name, sourceFile) ->
+                    val jobPath = "${jobDir!!.absolutePath}/input/$name"
+                    withContext(Dispatchers.IO) {
+                        Shell.cmd("cp ${sourceFile.absolutePath} $jobPath").exec()
+                    }
+                    jobInputFiles[name] = jobPath
+                    addLog(LogTag.PATCH, "Prepared input: $name")
                 }
-                addLog(LogTag.PATCH, "Copied framework.jar to job input directory")
 
                 // Step 5: Generate and execute run.sh
                 _patchingState.value = PatchingState.Patching("Generating job script", 1, featureScripts.size + 2)
                 addLog(LogTag.PATCH, "Generating run.sh...")
-                
+
                 val runScript = withContext(Dispatchers.IO) {
                     DiExecutor.generateRunScript(
                         context = context,
-                        jobDir = jobDir,
-                        frameworkJarPath = frameworkJobPath,
+                        jobDir = jobDir!!,
+                        inputFiles = jobInputFiles, // Pass the map of all files
                         features = featureScripts,
                         apiLevel = info.apiLevel,
                         deviceCodename = info.deviceCodename
@@ -677,7 +677,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 addLog(LogTag.PATCH, "Executing job...")
                 
                 val exitCode = withContext(Dispatchers.IO) {
-                    DiExecutor.runJob(jobDir) { line ->
+                    DiExecutor.runJob(jobDir!!) { line ->
                         viewModelScope.launch { addLog(LogTag.PATCH, line) }
                     }
                 }
@@ -692,43 +692,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Step 6: Build Magisk module from output
                 _patchingState.value = PatchingState.BuildingModule
-                addLog(LogTag.MODULE, "Building Magisk module...")
+                addLog(LogTag.MODULE, "Collecting patched files...")
 
                 // Collect patched JARs from output directory (need root to access)
                 val patchedJars = mutableMapOf<String, File>()
-                val outputPath = "${jobDir.absolutePath}/output/framework_patched.jar"
-                val inputPath = "${jobDir.absolutePath}/input/framework.jar"
-                
-                // Check if patched framework exists using root
-                val checkResult = Shell.cmd("su -c 'test -f $outputPath && echo YES || echo NO'").exec()
-                val hasPatchedOutput = checkResult.out.any { it.contains("YES") }
-                
-                if (hasPatchedOutput) {
-                    addLog(LogTag.MODULE, "Found patched framework in output directory")
-                    // Copy to app cache so we can access it
-                    val localPatched = File(context.cacheDir, "framework_patched.jar")
-                    Shell.cmd(
-                        "cp $outputPath ${localPatched.absolutePath}",
-                        "chmod 644 ${localPatched.absolutePath}"
-                    ).exec()
-                    patchedJars["framework.jar"] = localPatched
-                } else {
-                    addLog(LogTag.MODULE, "Using in-place patched framework from input directory")
-                    // Framework was patched in place, copy from input dir
-                    val localPatched = File(context.cacheDir, "framework_patched.jar")
-                    Shell.cmd(
-                        "cp $inputPath ${localPatched.absolutePath}",
-                        "chmod 644 ${localPatched.absolutePath}"
-                    ).exec()
-                    patchedJars["framework.jar"] = localPatched
-                }
 
-                // Copy any additional JARs that were in extractedFiles (like services.jar)
-                extractedFiles.forEach { (name, file) ->
-                    if (name != "framework.jar" && !patchedJars.containsKey(name)) {
-                        patchedJars[name] = file
+                extractedFiles.keys.forEach { fileName ->
+                    val outputPath = "${jobDir!!.absolutePath}/output/$fileName"
+                    val inputPath = "${jobDir!!.absolutePath}/input/$fileName"
+
+                    // Check if file exists in output (modified or copied by run.sh)
+                    val checkResult = Shell.cmd("su -c 'test -f $outputPath && echo YES'").exec()
+                    val hasOutput = checkResult.out.any { it.contains("YES") }
+
+                    val localFile = File(context.cacheDir, "patched_$fileName")
+
+                    if (hasOutput) {
+                        // Copy from output to app cache
+                        Shell.cmd(
+                            "cp $outputPath ${localFile.absolutePath}",
+                            "chmod 644 ${localFile.absolutePath}"
+                        ).exec()
+                        patchedJars[fileName] = localFile
+                        addLog(LogTag.MODULE, "Retrieved $fileName from output")
+                    } else {
+                        // Fallback to original input if missing from output (safety net)
+                        addLog(LogTag.MODULE, "Warning: $fileName not found in output, using original")
+                        Shell.cmd(
+                            "cp $inputPath ${localFile.absolutePath}",
+                            "chmod 644 ${localFile.absolutePath}"
+                        ).exec()
+                        patchedJars[fileName] = localFile
                     }
                 }
+
+                if (patchedJars.isEmpty()) {
+                    _patchingState.value = PatchingState.Error("No files found to package", recoverable = true)
+                    return@launch
+                }
+
+                addLog(LogTag.MODULE, "Building Magisk module...")
 
                 val moduleResult = ModuleGenerator.generateModule(
                     context = context,
@@ -758,15 +761,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 _patchingState.value = PatchingState.ModuleReady(moduleFile.absolutePath)
                             }
                         )
-                        
+
                         // Cleanup job directory
-                        Shell.cmd("rm -rf ${jobDir.absolutePath}").exec()
+                        Shell.cmd("rm -rf ${jobDir!!.absolutePath}").exec()
                     },
                     onFailure = { error ->
                         addLog(LogTag.ERROR, "Module generation failed: ${error.message}")
                         _patchingState.value = PatchingState.Error("Module generation failed: ${error.message}", recoverable = true)
                         // Cleanup job directory on failure too
-                        Shell.cmd("rm -rf ${jobDir.absolutePath}").exec()
+                        Shell.cmd("rm -rf ${jobDir!!.absolutePath}").exec()
                     }
                 )
 
