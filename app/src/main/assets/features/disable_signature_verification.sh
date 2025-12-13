@@ -2,7 +2,11 @@
 #@description Patches framework.jar to bypass signature verification
 #@requires framework.jar
 
-FRAMEWORK="$1"
+FRAMEWORK="$FRAMEWORK_JAR"
+if [ -z "$FRAMEWORK" ]; then
+    echo "[!] framework.jar not found for Signature Verification patch"
+    return 1
+fi
 WORK_DIR="$TMP/fw_dc"
 
 # Smali patch content
@@ -19,7 +23,7 @@ echo "[*] Applying signature verification bypass..."
 smali_kit -c -m "hasAncestorOrSelf" -re "$disable" -d "$WORK_DIR" -name "SigningDetails*"
 
 echo "[*] Recompiling framework.jar..."
-dynamic_apktool -preserve-signature -recompile "$WORK_DIR" -o "$FRAMEWORK"
+dynamic_apktool -recompile "$WORK_DIR" -o "$FRAMEWORK"
 
 # Cleanup
 delete_recursive "$WORK_DIR"
