@@ -100,14 +100,16 @@ object RootManager {
             val tempPath = "/data/local/tmp/$fileName"
             val destinationFile = File(destinationDir, fileName)
 
+            // Ensure temp directory exists and copy with root
             val copyToTempResult = Shell.cmd(
-                "cp \"$sourcePath\" \"$tempPath\"",
-                "chmod 644 \"$tempPath\""
+                "su -c 'mkdir -p /data/local/tmp && cp \"$sourcePath\" \"$tempPath\" && chmod 644 \"$tempPath\"'"
             ).exec()
 
             if (!copyToTempResult.isSuccess) {
+                // Log the actual error for debugging
+                val errMsg = copyToTempResult.err.joinToString()
                 return@withContext Result.failure(
-                    Exception("Failed to copy file to temp: ${copyToTempResult.err.joinToString()}")
+                    Exception("Failed to copy file to temp: $errMsg")
                 )
             }
 

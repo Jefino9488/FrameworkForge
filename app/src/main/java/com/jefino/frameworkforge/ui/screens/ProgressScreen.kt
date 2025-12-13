@@ -165,6 +165,53 @@ fun ProgressScreen(
                         subtitle = "Installing via Magisk..."
                     )
                 }
+                // Local patching states
+                is PatchingState.InstallingDI -> {
+                    StatusBanner(
+                        title = "Setting Up",
+                        subtitle = state.progress
+                    )
+                }
+                is PatchingState.Patching -> {
+                    ProgressCard(
+                        title = "Applying Patches",
+                        subtitle = state.featureName,
+                        progress = state.current.toFloat() / state.total
+                    )
+                }
+                is PatchingState.BuildingModule -> {
+                    StatusBanner(
+                        title = "Building Module",
+                        subtitle = "Creating Magisk module ZIP..."
+                    )
+                }
+                is PatchingState.ModuleReady -> {
+                    Column {
+                        StatusBanner(
+                            title = "Module Ready",
+                            subtitle = "Saved to Downloads folder"
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        
+                        Button(
+                            onClick = {
+                                viewModel.installGeneratedModule(state.filePath)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = AppColors.Primary)
+                        ) {
+                            Text("Install Module")
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = onComplete,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Done")
+                        }
+                    }
+                }
                 is PatchingState.Error -> {
                     StatusBanner(
                         title = "Error Occurred",
@@ -200,6 +247,15 @@ fun ProgressScreen(
                     .weight(1f)
                     .fillMaxWidth()
             )
+
+            // Save Logs button
+            OutlinedButton(
+                onClick = { viewModel.saveLogs() },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Save Logs")
+            }
 
             // Action buttons
             AnimatedVisibility(

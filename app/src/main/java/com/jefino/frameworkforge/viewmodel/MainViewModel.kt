@@ -1,11 +1,16 @@
 package com.jefino.frameworkforge.viewmodel
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jefino.frameworkforge.core.ApiKeyManager
+import com.jefino.frameworkforge.core.DiExecutor
+import com.jefino.frameworkforge.core.DiInstaller
 import com.jefino.frameworkforge.core.FeatureManager
+import com.jefino.frameworkforge.core.ModuleGenerator
+import com.jefino.frameworkforge.core.PatchFeature
 import com.jefino.frameworkforge.core.RootManager
 import com.jefino.frameworkforge.core.SystemInspector
 import com.jefino.frameworkforge.data.api.GitHubRelease
@@ -18,10 +23,13 @@ import com.jefino.frameworkforge.model.LogTag
 import com.jefino.frameworkforge.model.PatchingMode
 import com.jefino.frameworkforge.model.PatchingState
 import com.jefino.frameworkforge.model.SelectedFile
+import com.topjohnwu.superuser.Shell
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
@@ -72,8 +80,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoadingReleases = MutableStateFlow(false)
     val isLoadingReleases: StateFlow<Boolean> = _isLoadingReleases.asStateFlow()
 
+    // Use local patching (default true) vs cloud workflow
+    private val _useLocalPatching = MutableStateFlow(true)
+    val useLocalPatching: StateFlow<Boolean> = _useLocalPatching.asStateFlow()
+
+    // Local patch features from features folder
+    private val _localPatchFeatures = MutableStateFlow<List<com.jefino.frameworkforge.core.LocalPatchFeature>>(emptyList())
+    val localPatchFeatures: StateFlow<List<com.jefino.frameworkforge.core.LocalPatchFeature>> = _localPatchFeatures.asStateFlow()
+
     init {
         checkRootAndScan()
+        loadLocalPatchFeatures()
+    }
+
+    private fun loadLocalPatchFeatures() {
+        viewModelScope.launch {
+            _localPatchFeatures.value = FeatureManager.getLocalPatchFeatures(getApplication())
+        }
     }
 
     fun setPatchingMode(mode: PatchingMode) {
@@ -191,6 +214,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _features.value = FeatureManager.updateFeature(_features.value, featureId, enabled)
     }
 
+    fun updateLocalPatchFeature(featureId: String, enabled: Boolean) {
+        _localPatchFeatures.value = _localPatchFeatures.value.map { feature ->
+            if (feature.id == featureId) feature.copy(isEnabled = enabled) else feature
+        }
+    }
+
     fun startPatching() {
         viewModelScope.launch {
             val mode = _patchingMode.value
@@ -240,14 +269,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun extractFrameworkFiles(): Map<String, File> {
+    private suspend fun extractFrameworkFiles(requiredJars: List<String> = listOf("framework.jar")): Map<String, File> {
         val files = mutableMapOf<String, File>()
         val filesDir = getApplication<Application>().filesDir
         val frameworkPaths = SystemInspector.getAvailableFrameworkPaths()
-        val totalFiles = frameworkPaths.size
+        
+        // Filter to only required JARs
+        val pathsToExtract = frameworkPaths.filter { requiredJars.contains(it.key) }
+        val totalFiles = pathsToExtract.size
         var extracted = 0
 
-        for ((name, path) in frameworkPaths) {
+        for ((name, path) in pathsToExtract) {
             _patchingState.value = PatchingState.Extracting(name, extracted, totalFiles)
             addLog(LogTag.EXTRACT, "Extracting $name...")
 
@@ -416,6 +448,50 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _logs.value = _logs.value + LogEntry(tag, message)
     }
 
+    /**
+     * Save logs to Downloads folder
+     */
+    fun saveLogs() {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                val fileName = "FrameworkForge_logs_$timestamp.txt"
+                
+                // Format logs
+                val logContent = buildString {
+                    appendLine("FrameworkForge Logs")
+                    appendLine("Generated: ${java.util.Date()}")
+                    appendLine("Device: ${_deviceInfo.value.deviceCodename}")
+                    appendLine("Android: ${_deviceInfo.value.androidVersion} (API ${_deviceInfo.value.apiLevel})")
+                    appendLine("=" .repeat(50))
+                    appendLine()
+                    
+                    _logs.value.forEach { entry ->
+                        val timeFormat = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                        val time = timeFormat.format(java.util.Date(entry.timestamp))
+                        appendLine("$time [${entry.tag.displayName}] ${entry.message}")
+                    }
+                }
+                
+                // Write to temp file
+                val tempFile = File(context.cacheDir, fileName)
+                tempFile.writeText(logContent)
+                
+                // Move to Downloads
+                val result = RootManager.moveToDownloads(tempFile, fileName)
+                
+                if (result.isSuccess) {
+                    addLog(LogTag.SUCCESS, "Logs saved to Downloads/$fileName")
+                } else {
+                    addLog(LogTag.ERROR, "Failed to save logs: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                addLog(LogTag.ERROR, "Failed to save logs: ${e.message}")
+            }
+        }
+    }
+
     fun refreshDeviceInfo() {
         checkRootAndScan()
     }
@@ -447,4 +523,297 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Toggle between local and cloud patching
+     */
+    fun setUseLocalPatching(useLocal: Boolean) {
+        _useLocalPatching.value = useLocal
+    }
+
+    /**
+     * Start local on-device patching using DynamicInstaller.
+     * 
+     * Execution flow:
+     * 1. Extract/copy framework files
+     * 2. Install DynamicInstaller if needed
+     * 3. Deploy feature scripts to safe runtime directory
+     * 4. Create isolated job directory with proper structure
+     * 5. Generate and execute run.sh (ONLY entry point for patching)
+     * 6. Build Magisk module from patched output
+     * 7. Cleanup
+     */
+    fun startLocalPatching() {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val info = _deviceInfo.value
+            var jobDir: File? = null
+
+            try {
+                // Get enabled local features and determine required JARs
+                val enabledFeatures = _localPatchFeatures.value.filter { it.isEnabled }
+                if (enabledFeatures.isEmpty()) {
+                    _patchingState.value = PatchingState.Error("No features selected", recoverable = true)
+                    return@launch
+                }
+                
+                // Collect all unique required JARs from enabled features
+                val requiredJars = enabledFeatures.flatMap { it.requiredJars }.distinct()
+                addLog(LogTag.INFO, "Starting local patching workflow...")
+                addLog(LogTag.INFO, "Required JARs: ${requiredJars.joinToString(", ")}")
+                
+                // Step 1: Extract or copy only the required framework files
+                val extractedFiles = when (_patchingMode.value) {
+                    PatchingMode.AUTO_EXTRACT -> {
+                        // Check if required JARs are available
+                        requiredJars.forEach { jar ->
+                            val available = when (jar) {
+                                "framework.jar" -> info.hasFrameworkJar
+                                "services.jar" -> info.hasServicesJar
+                                "miui-services.jar" -> info.hasMiuiServicesJar
+                                else -> true
+                            }
+                            if (!available) {
+                                _patchingState.value = PatchingState.Error("$jar not found on device", recoverable = false)
+                                return@launch
+                            }
+                        }
+                        extractFrameworkFiles(requiredJars)
+                    }
+                    PatchingMode.MANUAL_SELECT -> {
+                        val selected = _selectedFiles.value
+                        requiredJars.forEach { jar ->
+                            if (!selected.containsKey(jar)) {
+                                _patchingState.value = PatchingState.Error("Please select $jar", recoverable = true)
+                                return@launch
+                            }
+                        }
+                        copySelectedFiles()
+                    }
+                }
+
+                if (extractedFiles.isEmpty()) {
+                    _patchingState.value = PatchingState.Error("No files were extracted", recoverable = false)
+                    return@launch
+                }
+
+                // Step 2: Install DynamicInstaller if needed
+                _patchingState.value = PatchingState.InstallingDI()
+                addLog(LogTag.DI, "Setting up DynamicInstaller...")
+
+                val diInstalled = withContext(Dispatchers.IO) {
+                    DiInstaller.installIfNeeded(context) { msg ->
+                        viewModelScope.launch { addLog(LogTag.DI, msg) }
+                    }
+                }
+
+                if (!diInstalled) {
+                    _patchingState.value = PatchingState.Error("Failed to install DynamicInstaller", recoverable = true)
+                    return@launch
+                }
+
+                addLog(LogTag.DI, "DynamicInstaller ready")
+
+                // Step 3: Deploy feature scripts to safe runtime directory
+                addLog(LogTag.PATCH, "Deploying feature scripts...")
+                val enabledFeatureIds = enabledFeatures.map { it.id }
+                
+                val featureScripts = withContext(Dispatchers.IO) {
+                    FeatureManager.getEnabledScripts(context, enabledFeatureIds)
+                }
+
+                if (featureScripts.isEmpty()) {
+                    _patchingState.value = PatchingState.Error("No feature scripts found for selected features", recoverable = true)
+                    return@launch
+                }
+
+                addLog(LogTag.PATCH, "Found ${featureScripts.size} patch(es): ${featureScripts.joinToString(", ") { it.name }}")
+
+                // Step 4: Create isolated job directory
+                val jobId = System.currentTimeMillis().toString()
+                jobDir = File("/data/local/tmp/frameworkforge/jobs/$jobId")
+                
+                _patchingState.value = PatchingState.Patching("Setting up job", 0, featureScripts.size)
+                addLog(LogTag.PATCH, "Creating job directory: ${jobDir.name}")
+                
+                withContext(Dispatchers.IO) {
+                    Shell.cmd(
+                        "mkdir -p ${jobDir.absolutePath}/input",
+                        "mkdir -p ${jobDir.absolutePath}/work",
+                        "mkdir -p ${jobDir.absolutePath}/output",
+                        "chmod -R 755 ${jobDir.absolutePath}"
+                    ).exec()
+                }
+
+                // Copy framework.jar to job input directory
+                val frameworkSource = extractedFiles["framework.jar"]
+                    ?: throw Exception("framework.jar not found in extracted files")
+                
+                val frameworkJobPath = "${jobDir.absolutePath}/input/framework.jar"
+                
+                withContext(Dispatchers.IO) {
+                    Shell.cmd("cp ${frameworkSource.absolutePath} $frameworkJobPath").exec()
+                }
+                addLog(LogTag.PATCH, "Copied framework.jar to job input directory")
+
+                // Step 5: Generate and execute run.sh
+                _patchingState.value = PatchingState.Patching("Generating job script", 1, featureScripts.size + 2)
+                addLog(LogTag.PATCH, "Generating run.sh...")
+                
+                val runScript = withContext(Dispatchers.IO) {
+                    DiExecutor.generateRunScript(
+                        context = context,
+                        jobDir = jobDir,
+                        frameworkJarPath = frameworkJobPath,
+                        features = featureScripts,
+                        apiLevel = info.apiLevel,
+                        deviceCodename = info.deviceCodename
+                    )
+                }
+                addLog(LogTag.PATCH, "run.sh generated with ${featureScripts.size} feature(s)")
+
+                // Execute the job
+                _patchingState.value = PatchingState.Patching("Executing patches", 2, featureScripts.size + 2)
+                addLog(LogTag.PATCH, "Executing job...")
+                
+                val exitCode = withContext(Dispatchers.IO) {
+                    DiExecutor.runJob(jobDir) { line ->
+                        viewModelScope.launch { addLog(LogTag.PATCH, line) }
+                    }
+                }
+
+                if (exitCode != 0) {
+                    addLog(LogTag.ERROR, "Job failed with exit code $exitCode")
+                    _patchingState.value = PatchingState.Error("Patching failed (exit code $exitCode)", recoverable = true)
+                    return@launch
+                }
+
+                addLog(LogTag.PATCH, "All patches applied successfully")
+
+                // Step 6: Build Magisk module from output
+                _patchingState.value = PatchingState.BuildingModule
+                addLog(LogTag.MODULE, "Building Magisk module...")
+
+                // Collect patched JARs from output directory (need root to access)
+                val patchedJars = mutableMapOf<String, File>()
+                val outputPath = "${jobDir.absolutePath}/output/framework_patched.jar"
+                val inputPath = "${jobDir.absolutePath}/input/framework.jar"
+                
+                // Check if patched framework exists using root
+                val checkResult = Shell.cmd("su -c 'test -f $outputPath && echo YES || echo NO'").exec()
+                val hasPatchedOutput = checkResult.out.any { it.contains("YES") }
+                
+                if (hasPatchedOutput) {
+                    addLog(LogTag.MODULE, "Found patched framework in output directory")
+                    // Copy to app cache so we can access it
+                    val localPatched = File(context.cacheDir, "framework_patched.jar")
+                    Shell.cmd(
+                        "cp $outputPath ${localPatched.absolutePath}",
+                        "chmod 644 ${localPatched.absolutePath}"
+                    ).exec()
+                    patchedJars["framework.jar"] = localPatched
+                } else {
+                    addLog(LogTag.MODULE, "Using in-place patched framework from input directory")
+                    // Framework was patched in place, copy from input dir
+                    val localPatched = File(context.cacheDir, "framework_patched.jar")
+                    Shell.cmd(
+                        "cp $inputPath ${localPatched.absolutePath}",
+                        "chmod 644 ${localPatched.absolutePath}"
+                    ).exec()
+                    patchedJars["framework.jar"] = localPatched
+                }
+
+                // Copy any additional JARs that were in extractedFiles (like services.jar)
+                extractedFiles.forEach { (name, file) ->
+                    if (name != "framework.jar" && !patchedJars.containsKey(name)) {
+                        patchedJars[name] = file
+                    }
+                }
+
+                val moduleResult = ModuleGenerator.generateModule(
+                    context = context,
+                    patchedJars = patchedJars,
+                    deviceCodename = info.deviceCodename,
+                    androidVersion = info.androidVersion
+                ) { msg ->
+                    viewModelScope.launch { addLog(LogTag.MODULE, msg) }
+                }
+
+                moduleResult.fold(
+                    onSuccess = { moduleFile ->
+                        addLog(LogTag.MODULE, "Module created: ${moduleFile.name}")
+
+                        // Move to Downloads
+                        val downloadResult = ModuleGenerator.moveToDownloads(moduleFile)
+                        downloadResult.fold(
+                            onSuccess = { finalFile ->
+                                addLog(LogTag.SUCCESS, "Module saved to: ${finalFile.absolutePath}")
+                                _downloadedModulePath.value = finalFile.absolutePath
+                                _patchingState.value = PatchingState.ModuleReady(finalFile.absolutePath)
+                            },
+                            onFailure = { error ->
+                                addLog(LogTag.ERROR, "Failed to save module: ${error.message}")
+                                // Still use the cache file as fallback
+                                _downloadedModulePath.value = moduleFile.absolutePath
+                                _patchingState.value = PatchingState.ModuleReady(moduleFile.absolutePath)
+                            }
+                        )
+                        
+                        // Cleanup job directory
+                        Shell.cmd("rm -rf ${jobDir.absolutePath}").exec()
+                    },
+                    onFailure = { error ->
+                        addLog(LogTag.ERROR, "Module generation failed: ${error.message}")
+                        _patchingState.value = PatchingState.Error("Module generation failed: ${error.message}", recoverable = true)
+                        // Cleanup job directory on failure too
+                        Shell.cmd("rm -rf ${jobDir.absolutePath}").exec()
+                    }
+                )
+
+            } catch (e: Exception) {
+                addLog(LogTag.ERROR, "Error: ${e.message}")
+                _patchingState.value = PatchingState.Error(e.message ?: "Unknown error", recoverable = true)
+            } finally {
+                // Step 7: Cleanup
+                withContext(Dispatchers.IO) {
+                    // Cleanup job directory
+                    jobDir?.let { Shell.cmd("rm -rf ${it.absolutePath}").exec() }
+                    // Cleanup feature runtime if needed
+                    FeatureManager.cleanup()
+                    // Cleanup app files dir
+                    RootManager.cleanup(context.filesDir)
+                }
+            }
+        }
+    }
+
+    /**
+     * Install the generated module using root manager
+     */
+    fun installGeneratedModule(modulePath: String) {
+        viewModelScope.launch {
+            try {
+                _patchingState.value = PatchingState.Installing
+                addLog(LogTag.INSTALL, "Installing module...")
+
+                val result = RootManager.installMagiskModule(modulePath)
+
+                result.fold(
+                    onSuccess = {
+                        addLog(LogTag.SUCCESS, "Module installed successfully!")
+                        addLog(LogTag.SUCCESS, "Please reboot your device to apply changes")
+                        _patchingState.value = PatchingState.Success
+                    },
+                    onFailure = { error ->
+                        addLog(LogTag.ERROR, "Installation failed: ${error.message}")
+                        _patchingState.value = PatchingState.Error(error.message ?: "Installation failed", recoverable = true)
+                    }
+                )
+            } catch (e: Exception) {
+                addLog(LogTag.ERROR, "Error: ${e.message}")
+                _patchingState.value = PatchingState.Error(e.message ?: "Unknown error", recoverable = true)
+            }
+        }
+    }
 }
+

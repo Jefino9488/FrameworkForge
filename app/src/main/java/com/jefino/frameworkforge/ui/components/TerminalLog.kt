@@ -110,6 +110,10 @@ private fun getTagColor(tag: LogTag) = when (tag) {
     LogTag.INSTALL -> AppColors.Primary
     LogTag.SUCCESS -> AppColors.TerminalSuccess
     LogTag.ERROR -> AppColors.TerminalError
+    // Local patching tags
+    LogTag.DI -> AppColors.TerminalInfo
+    LogTag.PATCH -> AppColors.Primary
+    LogTag.MODULE -> AppColors.Success
 }
 
 @Composable

@@ -38,6 +38,19 @@ sealed class PatchingState {
     data object Success : PatchingState()
 
     data class Error(val message: String, val recoverable: Boolean = true) : PatchingState()
+
+    // Local patching states
+    data class InstallingDI(val progress: String = "Setting up DynamicInstaller...") : PatchingState()
+
+    data class Patching(
+        val featureName: String,
+        val current: Int,
+        val total: Int
+    ) : PatchingState()
+
+    data object BuildingModule : PatchingState()
+
+    data class ModuleReady(val filePath: String) : PatchingState()
 }
 
 /**
@@ -58,5 +71,9 @@ enum class LogTag(val displayName: String) {
     DOWNLOAD("DOWNLOAD"),
     INSTALL("INSTALL"),
     SUCCESS("SUCCESS"),
-    ERROR("ERROR")
+    ERROR("ERROR"),
+    // Local patching tags
+    DI("DI"),
+    PATCH("PATCH"),
+    MODULE("MODULE")
 }

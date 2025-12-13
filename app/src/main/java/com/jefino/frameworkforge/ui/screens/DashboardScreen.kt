@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.Manifest
+import androidx.compose.ui.tooling.preview.Preview
 import com.jefino.frameworkforge.data.api.GitHubRelease
 import com.jefino.frameworkforge.model.PatchingState
 import com.jefino.frameworkforge.ui.components.DeviceInfoCard
@@ -59,6 +60,7 @@ import com.jefino.frameworkforge.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+@Preview
 fun DashboardScreen(
     viewModel: MainViewModel,
     onNavigateToConfig: () -> Unit,

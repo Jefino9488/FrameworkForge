@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.jefino.frameworkforge.core.FeatureManager
 import com.jefino.frameworkforge.model.PatchingMode
@@ -74,9 +75,11 @@ fun ConfigScreen(
 ) {
     val deviceInfo by viewModel.deviceInfo.collectAsState()
     val features by viewModel.features.collectAsState()
+    val localPatchFeatures by viewModel.localPatchFeatures.collectAsState()
     val isRootAvailable by viewModel.isRootAvailable.collectAsState()
     val patchingMode by viewModel.patchingMode.collectAsState()
     val selectedFiles by viewModel.selectedFiles.collectAsState()
+    val useLocalPatching by viewModel.useLocalPatching.collectAsState()
 
     val context = LocalContext.current
 
@@ -227,15 +230,68 @@ fun ConfigScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
+            // Patching Method Selection
             Text(
-                text = "Select Features",
+                text = "Patching Method",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = AppColors.TextPrimary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = useLocalPatching,
+                    onClick = { viewModel.setUseLocalPatching(true) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = AppColors.Primary,
+                        activeContentColor = AppColors.TextPrimary,
+                        inactiveContainerColor = AppColors.DarkSurfaceVariant,
+                        inactiveContentColor = AppColors.TextSecondary
+                    )
+                ) {
+                    Text("Local Patching")
+                }
+                SegmentedButton(
+                    selected = !useLocalPatching,
+                    onClick = { viewModel.setUseLocalPatching(false) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = AppColors.Primary,
+                        activeContentColor = AppColors.TextPrimary,
+                        inactiveContainerColor = AppColors.DarkSurfaceVariant,
+                        inactiveContentColor = AppColors.TextSecondary
+                    )
+                ) {
+                    Text("Cloud Patching")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = if (useLocalPatching)
+                    "Patch on-device using DynamicInstaller (faster, requires root)"
+                else
+                    "Upload files for cloud patching (works without root)",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppColors.TextSecondary
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Text(
+                text = if (useLocalPatching) "Available Patches" else "Select Features",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = AppColors.TextPrimary
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Choose which patches to apply to your framework",
+                text = if (useLocalPatching) 
+                    "Patches from features folder (${localPatchFeatures.size} available)" 
+                else 
+                    "Choose which patches to apply to your framework",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppColors.TextSecondary
             )
@@ -243,14 +299,34 @@ fun ConfigScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                features.forEach { feature ->
-                    FeatureCheckbox(
-                        feature = feature,
-                        onCheckedChange = { enabled ->
-                            viewModel.updateFeature(feature.id, enabled)
-                        },
-                        enabled = !feature.requiresMiui || (patchingMode == PatchingMode.MANUAL_SELECT && selectedFiles.containsKey("miui-services.jar")) || deviceInfo.hasMiuiServicesJar
-                    )
+                if (useLocalPatching) {
+                    // Show local patch features from features folder
+                    localPatchFeatures.forEach { feature ->
+                        LocalPatchFeatureItem(
+                            feature = feature,
+                            onCheckedChange = { enabled ->
+                                viewModel.updateLocalPatchFeature(feature.id, enabled)
+                            }
+                        )
+                    }
+                    if (localPatchFeatures.isEmpty()) {
+                        Text(
+                            text = "No patches found in features folder",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = AppColors.TextMuted
+                        )
+                    }
+                } else {
+                    // Show cloud features
+                    features.forEach { feature ->
+                        FeatureCheckbox(
+                            feature = feature,
+                            onCheckedChange = { enabled ->
+                                viewModel.updateFeature(feature.id, enabled)
+                            },
+                            enabled = !feature.requiresMiui || (patchingMode == PatchingMode.MANUAL_SELECT && selectedFiles.containsKey("miui-services.jar")) || deviceInfo.hasMiuiServicesJar
+                        )
+                    }
                 }
             }
 
@@ -266,7 +342,10 @@ fun ConfigScreen(
                     color = AppColors.TextSecondary
                 )
                 Text(
-                    text = featureSummary,
+                    text = if (useLocalPatching) {
+                        val enabled = localPatchFeatures.count { it.isEnabled }
+                        if (enabled == 0) "None" else "$enabled patch(es)"
+                    } else featureSummary,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = AppColors.Primary
@@ -277,7 +356,11 @@ fun ConfigScreen(
 
             Button(
                 onClick = {
-                    viewModel.startPatching()
+                    if (useLocalPatching) {
+                        viewModel.startLocalPatching()
+                    } else {
+                        viewModel.startPatching()
+                    }
                     onStartPatching()
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -287,7 +370,7 @@ fun ConfigScreen(
             ) {
                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
                 Text(
-                    text = "Start Patching",
+                    text = if (useLocalPatching) "Start Local Patching" else "Start Cloud Patching",
                     modifier = Modifier.padding(vertical = 8.dp),
                     fontWeight = FontWeight.SemiBold
                 )
@@ -310,7 +393,10 @@ fun ConfigScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "This will upload files to the cloud, trigger the patching workflow, and install the resulting Magisk module.",
+                text = if (useLocalPatching) 
+                    "Patches will be applied locally using DynamicInstaller. A Magisk module will be created and saved to Downloads."
+                else
+                    "Files will be uploaded to the cloud for patching. The resulting Magisk module will be downloaded and installed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppColors.TextMuted
             )
@@ -389,6 +475,48 @@ private fun FileSelectionCard(
                     Text("Select")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LocalPatchFeatureItem(
+    feature: com.jefino.frameworkforge.core.LocalPatchFeature,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (feature.isEnabled) AppColors.Primary.copy(alpha = 0.1f)
+                else AppColors.DarkSurfaceVariant.copy(alpha = 0.5f)
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        androidx.compose.material3.Checkbox(
+            checked = feature.isEnabled,
+            onCheckedChange = onCheckedChange,
+            colors = androidx.compose.material3.CheckboxDefaults.colors(
+                checkedColor = AppColors.Primary,
+                uncheckedColor = AppColors.TextMuted,
+                checkmarkColor = AppColors.TextPrimary
+            )
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = feature.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = AppColors.TextPrimary
+            )
+            Text(
+                text = feature.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = AppColors.TextSecondary
+            )
         }
     }
 }
