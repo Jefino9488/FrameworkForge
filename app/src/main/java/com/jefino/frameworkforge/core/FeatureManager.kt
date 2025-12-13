@@ -196,17 +196,22 @@ object FeatureManager {
 
     /**
      * Parses feature metadata from script header comments
+     * Supports comma-separated requires (e.g., #@requires framework.jar,services.jar)
      */
     private fun parseFeatureMetadata(file: File): FeatureMetadata {
         var name = file.nameWithoutExtension.replace("_", " ")
         var desc = "No description"
-        var requires = mutableListOf<String>()
+        val requires = mutableListOf<String>()
 
         file.forEachLine { line ->
             when {
                 line.startsWith("#@name") -> name = line.removePrefix("#@name").trim()
                 line.startsWith("#@description") -> desc = line.removePrefix("#@description").trim()
-                line.startsWith("#@requires") -> requires.add(line.removePrefix("#@requires").trim())
+                line.startsWith("#@requires") -> {
+                    // Support both single and comma-separated requires
+                    val reqValue = line.removePrefix("#@requires").trim()
+                    requires.addAll(reqValue.split(",").map { it.trim() }.filter { it.isNotEmpty() })
+                }
             }
         }
 
