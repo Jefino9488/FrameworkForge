@@ -11,6 +11,7 @@ import com.jefino.frameworkforge.core.DiInstaller
 import com.jefino.frameworkforge.core.FeatureManager
 import com.jefino.frameworkforge.core.ModuleGenerator
 import com.jefino.frameworkforge.core.PatchFeature
+import com.jefino.frameworkforge.core.UserFeatureImporter
 import com.jefino.frameworkforge.core.RootManager
 import com.jefino.frameworkforge.core.SystemInspector
 import com.jefino.frameworkforge.data.api.GitHubRelease
@@ -217,6 +218,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateLocalPatchFeature(featureId: String, enabled: Boolean) {
         _localPatchFeatures.value = _localPatchFeatures.value.map { feature ->
             if (feature.id == featureId) feature.copy(isEnabled = enabled) else feature
+        }
+    }
+
+    /**
+     * Import a user-provided script file for local patching
+     */
+    fun importUserFeature(uri: Uri, name: String) {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    UserFeatureImporter.import(context, input, name)
+                    loadLocalPatchFeatures() // Refresh the list
+                }
+            } catch (e: Exception) {
+                // Import failed silently - script won't appear in list
+            }
+        }
+    }
+
+    /**
+     * Refresh the local patch features list
+     */
+    fun refreshLocalPatchFeatures() {
+        loadLocalPatchFeatures()
+    }
+
+    /**
+     * Delete a user-imported feature script
+     */
+    fun deleteUserFeature(featureId: String) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            if (FeatureManager.deleteUserFeature(context, featureId)) {
+                loadLocalPatchFeatures() // Refresh the list
+            }
         }
     }
 

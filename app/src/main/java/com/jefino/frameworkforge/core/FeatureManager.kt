@@ -23,7 +23,8 @@ data class LocalPatchFeature(
     val name: String,
     val description: String,
     val requiredJars: List<String> = listOf("framework.jar"),
-    val isEnabled: Boolean = true
+    val isEnabled: Boolean = true,
+    val isUserFeature: Boolean = false
 )
 
 /**
@@ -65,7 +66,8 @@ object FeatureManager {
                     name = metadata.name,
                     description = metadata.description,
                     requiredJars = metadata.requiredJars,
-                    isEnabled = true
+                    isEnabled = true,
+                    isUserFeature = false
                 ))
             } catch (_: Exception) { }
         }
@@ -80,7 +82,8 @@ object FeatureManager {
                     name = metadata.name,
                     description = metadata.description,
                     requiredJars = metadata.requiredJars,
-                    isEnabled = true
+                    isEnabled = true,
+                    isUserFeature = true
                 ))
             } catch (_: Exception) { }
         }
@@ -231,6 +234,19 @@ object FeatureManager {
                 feature.id.contains(id, ignoreCase = true) ||
                 feature.name.replace(" ", "_").lowercase().contains(id.lowercase())
             }
+        }
+    }
+
+    /**
+     * Deletes a user-imported feature script
+     */
+    fun deleteUserFeature(context: Context, featureId: String): Boolean {
+        val userDir = File(context.filesDir, USER_STORAGE_PATH)
+        val file = File(userDir, "$featureId.sh")
+        return if (file.exists()) {
+            file.delete()
+        } else {
+            false
         }
     }
 

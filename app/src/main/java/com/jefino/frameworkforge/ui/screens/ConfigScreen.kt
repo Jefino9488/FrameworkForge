@@ -101,6 +101,21 @@ fun ConfigScreen(
         }
     }
 
+    // Script picker for importing user scripts
+    val scriptPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    val name = if (nameIndex >= 0) cursor.getString(nameIndex) else "custom_script.sh"
+                    viewModel.importUserFeature(uri, name)
+                }
+            }
+        }
+    }
+
     val enabledFeatures = features.filter { it.isEnabled }
     val featureSummary = FeatureManager.getEnabledFeaturesSummary(features)
 
@@ -280,12 +295,23 @@ fun ConfigScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            Text(
-                text = if (useLocalPatching) "Available Patches" else "Select Features",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = AppColors.TextPrimary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (useLocalPatching) "Available Patches" else "Select Features",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = AppColors.TextPrimary
+                )
+                if (useLocalPatching) {
+                    IconButton(onClick = { scriptPickerLauncher.launch(arrayOf("*/*")) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Import Script", tint = AppColors.Primary)
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = if (useLocalPatching) 
@@ -306,7 +332,10 @@ fun ConfigScreen(
                             feature = feature,
                             onCheckedChange = { enabled ->
                                 viewModel.updateLocalPatchFeature(feature.id, enabled)
-                            }
+                            },
+                            onDeleteClick = if (feature.isUserFeature) {
+                                { viewModel.deleteUserFeature(feature.id) }
+                            } else null
                         )
                     }
                     if (localPatchFeatures.isEmpty()) {
@@ -482,7 +511,8 @@ private fun FileSelectionCard(
 @Composable
 private fun LocalPatchFeatureItem(
     feature: com.jefino.frameworkforge.core.LocalPatchFeature,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    onDeleteClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -506,17 +536,36 @@ private fun LocalPatchFeatureItem(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = feature.name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = AppColors.TextPrimary
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = feature.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = AppColors.TextPrimary
+                )
+                if (feature.isUserFeature) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "User",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppColors.Primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AppColors.Primary.copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+            }
             Text(
                 text = feature.description,
                 style = MaterialTheme.typography.bodySmall,
                 color = AppColors.TextSecondary
             )
+        }
+        if (onDeleteClick != null) {
+            IconButton(onClick = onDeleteClick) {
+                Icon(Icons.Default.Close, contentDescription = "Delete", tint = AppColors.Error)
+            }
         }
     }
 }
