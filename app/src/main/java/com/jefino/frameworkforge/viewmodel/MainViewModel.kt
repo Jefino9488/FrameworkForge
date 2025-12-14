@@ -9,6 +9,7 @@ import com.jefino.frameworkforge.core.ApiKeyManager
 import com.jefino.frameworkforge.core.DiExecutor
 import com.jefino.frameworkforge.core.DiInstaller
 import com.jefino.frameworkforge.core.FeatureManager
+import com.jefino.frameworkforge.core.FeatureUpdater
 import com.jefino.frameworkforge.core.ModuleGenerator
 import com.jefino.frameworkforge.core.PatchFeature
 import com.jefino.frameworkforge.core.UserFeatureImporter
@@ -88,6 +89,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Local patch features from features folder
     private val _localPatchFeatures = MutableStateFlow<List<com.jefino.frameworkforge.core.LocalPatchFeature>>(emptyList())
     val localPatchFeatures: StateFlow<List<com.jefino.frameworkforge.core.LocalPatchFeature>> = _localPatchFeatures.asStateFlow()
+
+    // Feature update state
+    private val _isUpdatingFeatures = MutableStateFlow(false)
+    val isUpdatingFeatures: StateFlow<Boolean> = _isUpdatingFeatures.asStateFlow()
 
     init {
         checkRootAndScan()
@@ -253,6 +258,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val context = getApplication<Application>()
             if (FeatureManager.deleteUserFeature(context, featureId)) {
                 loadLocalPatchFeatures() // Refresh the list
+            }
+        }
+    }
+
+    /**
+     * Update feature scripts from the GitHub repository
+     */
+    fun updateFeatureScripts() {
+        viewModelScope.launch {
+            _isUpdatingFeatures.value = true
+            try {
+                val context = getApplication<Application>()
+                val result = FeatureUpdater.updateScripts(context)
+                result.fold(
+                    onSuccess = { count ->
+                        addLog(LogTag.INFO, "Updated $count script(s) from repository")
+                        loadLocalPatchFeatures() // Refresh the list
+                    },
+                    onFailure = { error ->
+                        addLog(LogTag.ERROR, "Failed to update scripts: ${error.message}")
+                    }
+                )
+            } catch (e: Exception) {
+                addLog(LogTag.ERROR, "Update failed: ${e.message}")
+            } finally {
+                _isUpdatingFeatures.value = false
             }
         }
     }

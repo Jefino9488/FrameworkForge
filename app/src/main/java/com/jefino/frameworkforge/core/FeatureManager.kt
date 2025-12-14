@@ -37,6 +37,7 @@ object FeatureManager {
 
     private const val BUILTIN_ASSETS_PATH = "features"
     private const val USER_STORAGE_PATH = "features_user"
+    private const val UPDATED_STORAGE_PATH = "features_updated"
     
     // Safe runtime directories (noexec-safe)
     private const val FEATURES_RUNTIME_DIR = "/data/local/tmp/frameworkforge/features"
@@ -44,15 +45,39 @@ object FeatureManager {
     private const val USER_RUNTIME_DIR = "$FEATURES_RUNTIME_DIR/user"
 
     /**
-     * Gets available patch features from assets without deploying them
+     * Gets available patch features from assets/updated directory without deploying them
      * Used for UI display in local patching mode
+     * 
+     * Priority: features_updated (downloaded updates) -> assets (built-in)
      */
     fun getLocalPatchFeatures(context: Context): List<LocalPatchFeature> {
         val result = mutableListOf<LocalPatchFeature>()
+        val processedIds = mutableSetOf<String>()
         
-        // Get built-in features from assets
+        // 1. Check for updated features first (downloaded from GitHub)
+        val updatedDir = File(context.filesDir, UPDATED_STORAGE_PATH)
+        updatedDir.listFiles()?.filter { it.name.endsWith(".sh") }?.forEach { file ->
+            try {
+                val metadata = parseFeatureMetadata(file)
+                val id = file.name.removeSuffix(".sh")
+                result.add(LocalPatchFeature(
+                    id = id,
+                    name = metadata.name,
+                    description = metadata.description,
+                    requiredJars = metadata.requiredJars,
+                    isEnabled = true,
+                    isUserFeature = false  // Updated built-in, not user feature
+                ))
+                processedIds.add(id)
+            } catch (_: Exception) { }
+        }
+        
+        // 2. Get built-in features from assets (skip if already updated)
         val files = context.assets.list(BUILTIN_ASSETS_PATH) ?: emptyArray()
         files.filter { it.endsWith(".sh") }.forEach { filename ->
+            val id = filename.removeSuffix(".sh")
+            if (id in processedIds) return@forEach  // Skip if updated version exists
+            
             try {
                 val cacheFile = File(context.cacheDir, filename)
                 context.assets.open("$BUILTIN_ASSETS_PATH/$filename").use { input ->
@@ -62,23 +87,27 @@ object FeatureManager {
                 cacheFile.delete()
                 
                 result.add(LocalPatchFeature(
-                    id = filename.removeSuffix(".sh"),
+                    id = id,
                     name = metadata.name,
                     description = metadata.description,
                     requiredJars = metadata.requiredJars,
                     isEnabled = true,
                     isUserFeature = false
                 ))
+                processedIds.add(id)
             } catch (_: Exception) { }
         }
         
-        // Get user features
+        // 3. Get user-imported features (custom scripts)
         val userDir = File(context.filesDir, USER_STORAGE_PATH)
         userDir.listFiles()?.filter { it.name.endsWith(".sh") }?.forEach { file ->
+            val id = file.name.removeSuffix(".sh")
+            if (id in processedIds) return@forEach  // Skip duplicates
+            
             try {
                 val metadata = parseFeatureMetadata(file)
                 result.add(LocalPatchFeature(
-                    id = file.name.removeSuffix(".sh"),
+                    id = id,
                     name = metadata.name,
                     description = metadata.description,
                     requiredJars = metadata.requiredJars,
@@ -110,12 +139,47 @@ object FeatureManager {
     }
 
     /**
-     * Deploys built-in features from assets to runtime directory
+     * Deploys built-in features from assets/updated to runtime directory
+     * Priority: features_updated (downloaded) -> assets (built-in)
      */
     private fun deployBuiltinFeatures(context: Context): List<PatchFeature> {
-        val files = context.assets.list(BUILTIN_ASSETS_PATH) ?: return emptyList()
+        val result = mutableListOf<PatchFeature>()
+        val processedIds = mutableSetOf<String>()
         
-        return files.filter { it.endsWith(".sh") }.mapNotNull { filename ->
+        // 1. Deploy updated features first (downloaded from GitHub)
+        val updatedDir = File(context.filesDir, UPDATED_STORAGE_PATH)
+        updatedDir.listFiles()?.filter { it.name.endsWith(".sh") }?.forEach { file ->
+            try {
+                val metadata = parseFeatureMetadata(file)
+                val id = file.name.removeSuffix(".sh")
+                
+                // Copy to safe runtime directory via root
+                val runtimePath = "$BUILTIN_RUNTIME_DIR/${file.name}"
+                val copyResult = Shell.cmd(
+                    "cp ${file.absolutePath} $runtimePath",
+                    "chmod 755 $runtimePath"
+                ).exec()
+                
+                if (copyResult.isSuccess) {
+                    result.add(PatchFeature(
+                        id = id,
+                        name = metadata.name,
+                        description = metadata.description,
+                        runtimePath = runtimePath,
+                        isUserFeature = false
+                    ))
+                    processedIds.add(id)
+                }
+            } catch (_: Exception) { }
+        }
+        
+        // 2. Deploy assets (skip if already updated)
+        val files = context.assets.list(BUILTIN_ASSETS_PATH) ?: return result
+        
+        files.filter { it.endsWith(".sh") }.forEach { filename ->
+            val id = filename.removeSuffix(".sh")
+            if (id in processedIds) return@forEach  // Skip if updated version exists
+            
             try {
                 // First copy to cache (accessible from app context)
                 val cacheFile = File(context.cacheDir, filename)
@@ -137,20 +201,18 @@ object FeatureManager {
                 cacheFile.delete()
                 
                 if (copyResult.isSuccess) {
-                    PatchFeature(
-                        id = filename.removeSuffix(".sh"),
+                    result.add(PatchFeature(
+                        id = id,
                         name = metadata.name,
                         description = metadata.description,
                         runtimePath = runtimePath,
                         isUserFeature = false
-                    )
-                } else {
-                    null
+                    ))
                 }
-            } catch (e: Exception) {
-                null
-            }
+            } catch (_: Exception) { }
         }
+        
+        return result
     }
 
     /**

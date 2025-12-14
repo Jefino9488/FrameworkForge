@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,6 +81,7 @@ fun ConfigScreen(
     val patchingMode by viewModel.patchingMode.collectAsState()
     val selectedFiles by viewModel.selectedFiles.collectAsState()
     val useLocalPatching by viewModel.useLocalPatching.collectAsState()
+    val isUpdatingFeatures by viewModel.isUpdatingFeatures.collectAsState()
 
     val context = LocalContext.current
 
@@ -307,8 +309,26 @@ fun ConfigScreen(
                     color = AppColors.TextPrimary
                 )
                 if (useLocalPatching) {
-                    IconButton(onClick = { scriptPickerLauncher.launch(arrayOf("*/*")) }) {
-                        Icon(Icons.Default.Add, contentDescription = "Import Script", tint = AppColors.Primary)
+                    Row {
+                        // Refresh button
+                        IconButton(
+                            onClick = { viewModel.updateFeatureScripts() },
+                            enabled = !isUpdatingFeatures
+                        ) {
+                            if (isUpdatingFeatures) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = AppColors.Primary
+                                )
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = "Update Scripts", tint = AppColors.Primary)
+                            }
+                        }
+                        // Import button
+                        IconButton(onClick = { scriptPickerLauncher.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Default.Add, contentDescription = "Import Script", tint = AppColors.Primary)
+                        }
                     }
                 }
             }
