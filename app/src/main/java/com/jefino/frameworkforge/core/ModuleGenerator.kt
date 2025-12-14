@@ -12,16 +12,19 @@ import java.util.Locale
 
 /**
  * Generates Magisk/KernelSU compatible module ZIPs from patched framework JARs
+ * Uses the template from assets/module_template
  */
 object ModuleGenerator {
 
     private const val MODULE_ID = "frameworkforge_patched"
+    private const val TEMPLATE_ASSETS_PATH = "module_template"
 
     /**
-     * Creates a Magisk module ZIP from patched JAR files
+     * Creates a Magisk module ZIP from patched JAR files using the template
      * @param context Android context
      * @param patchedJars Map of JAR names to their patched file paths
-     * @param deviceInfo Basic device info for module naming
+     * @param deviceCodename Device codename for module naming
+     * @param androidVersion Android version string
      * @param log Callback for logging progress
      * @return Result containing the path to the generated ZIP file
      */
@@ -42,21 +45,13 @@ object ModuleGenerator {
             Shell.cmd("rm -rf ${workDir.absolutePath}").exec()
             Shell.cmd("mkdir -p ${workDir.absolutePath}").exec()
 
-            // Create module.prop
-            log("Writing module.prop...")
-            val moduleProp = """
-                id=$MODULE_ID
-                name=FrameworkForge Patched Framework
-                version=v1.0_$timestamp
-                versionCode=${System.currentTimeMillis() / 1000}
-                author=FrameworkForge
-                description=Patched framework for $deviceCodename (Android $androidVersion)
-            """.trimIndent()
+            // Copy template files from assets
+            log("Copying template files...")
+            copyTemplateFromAssets(context, workDir, log)
 
-            val propFile = File(context.cacheDir, "module.prop")
-            propFile.writeText(moduleProp)
-            Shell.cmd("cp ${propFile.absolutePath} ${workDir.absolutePath}/module.prop").exec()
-            propFile.delete()
+            // Update module.prop with device-specific values
+            log("Updating module.prop...")
+            updateModuleProp(context, workDir, deviceCodename, androidVersion, timestamp)
 
             // Create system/framework directory
             log("Setting up framework directory structure...")
@@ -83,33 +78,9 @@ object ModuleGenerator {
                 }
             }
 
-            // Create customize.sh for installation
-            log("Creating installation script...")
-            val customizeSh = """
-                #!/system/bin/sh
-                # FrameworkForge Module Installer
-                
-                ui_print "- Installing FrameworkForge patched framework"
-                ui_print "- Device: $deviceCodename"
-                ui_print "- Android: $androidVersion"
-                
-                # Set permissions
-                set_perm_recursive ${'$'}MODPATH/system 0 0 0755 0644
-                
-                ui_print "- Framework patched successfully!"
-                ui_print "- Please reboot your device"
-            """.trimIndent()
-
-            val customizeFile = File(context.cacheDir, "customize.sh")
-            customizeFile.writeText(customizeSh)
-            Shell.cmd("cp ${customizeFile.absolutePath} ${workDir.absolutePath}/customize.sh").exec()
-            Shell.cmd("chmod 755 ${workDir.absolutePath}/customize.sh").exec()
-            customizeFile.delete()
-
             // Create the module ZIP
             log("Creating module ZIP...")
             
-            // First try shell zip with root (user confirmed zip is available with root)
             val tempZipPath = "/data/local/tmp/frameworkforge/${outputZip.name}"
             Shell.cmd("mkdir -p /data/local/tmp/frameworkforge").exec()
             Shell.cmd("rm -f $tempZipPath").exec()
@@ -126,7 +97,6 @@ object ModuleGenerator {
                 ).exec()
                 
                 if (zipResult.isSuccess) {
-                    // Copy to app cache
                     Shell.cmd(
                         "cp $tempZipPath ${outputZip.absolutePath}",
                         "chmod 644 ${outputZip.absolutePath}"
@@ -145,7 +115,6 @@ object ModuleGenerator {
                 localWorkDir.deleteRecursively()
                 localWorkDir.mkdirs()
                 
-                // Copy files via root shell to app-accessible location
                 Shell.cmd(
                     "cp -r ${workDir.absolutePath}/* ${localWorkDir.absolutePath}/",
                     "chmod -R 644 ${localWorkDir.absolutePath}",
@@ -187,6 +156,108 @@ object ModuleGenerator {
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /**
+     * Copies template files from assets to the work directory
+     */
+    private fun copyTemplateFromAssets(context: Context, workDir: File, log: (String) -> Unit) {
+        val assetManager = context.assets
+        
+        fun copyAssetDir(assetPath: String, destDir: File) {
+            val files = assetManager.list(assetPath) ?: return
+            
+            if (files.isEmpty()) {
+                // It's a file, copy it
+                val destFile = File(destDir, File(assetPath).name)
+                assetManager.open(assetPath).use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                // Copy to workDir via root
+                Shell.cmd("cp ${destFile.absolutePath} ${workDir.absolutePath}/${File(assetPath).name}").exec()
+                destFile.delete()
+            } else {
+                // It's a directory
+                val subDir = if (assetPath == TEMPLATE_ASSETS_PATH) {
+                    workDir
+                } else {
+                    val relativePath = assetPath.removePrefix("$TEMPLATE_ASSETS_PATH/")
+                    File(workDir, relativePath).also {
+                        Shell.cmd("mkdir -p ${it.absolutePath}").exec()
+                    }
+                }
+                
+                for (file in files) {
+                    // Skip git-related files
+                    if (file.startsWith(".git")) continue
+                    
+                    val fullPath = "$assetPath/$file"
+                    val subFiles = assetManager.list(fullPath) ?: emptyArray()
+                    
+                    if (subFiles.isEmpty()) {
+                        // It's a file
+                        val tempFile = File(context.cacheDir, file)
+                        assetManager.open(fullPath).use { input ->
+                            tempFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        val destPath = "${subDir.absolutePath}/$file"
+                        Shell.cmd("cp ${tempFile.absolutePath} $destPath").exec()
+                        tempFile.delete()
+                    } else {
+                        // It's a subdirectory
+                        copyAssetDir(fullPath, workDir)
+                    }
+                }
+            }
+        }
+        
+        copyAssetDir(TEMPLATE_ASSETS_PATH, workDir)
+        
+        // Set proper permissions
+        Shell.cmd("chmod -R 755 ${workDir.absolutePath}").exec()
+        Shell.cmd("chmod 644 ${workDir.absolutePath}/module.prop").exec()
+        Shell.cmd("chmod 644 ${workDir.absolutePath}/system.prop").exec()
+    }
+
+    /**
+     * Updates module.prop with device-specific values
+     */
+    private fun updateModuleProp(
+        context: Context,
+        workDir: File,
+        deviceCodename: String,
+        androidVersion: String,
+        timestamp: String
+    ) {
+        val apiLevel = Build.VERSION.SDK_INT
+        val versionCode = System.currentTimeMillis() / 1000
+        
+        val moduleProp = """
+            id=$MODULE_ID
+            name=FrameworkForge Patched Framework
+            version=v1.0_$timestamp
+            versionCode=$versionCode
+            author=FrameworkForge
+            description=Patched framework for $deviceCodename (Android $androidVersion)
+            minMagisk=20400
+            ksu=1
+            minKsu=10904
+            sufs=1
+            minSufs=10000
+            minApi=$apiLevel
+            maxApi=$apiLevel
+            requireReboot=true
+            support=https://github.com/Jefino9488/FrameworkForge
+        """.trimIndent()
+
+        val propFile = File(context.cacheDir, "module.prop")
+        propFile.writeText(moduleProp)
+        Shell.cmd("cp ${propFile.absolutePath} ${workDir.absolutePath}/module.prop").exec()
+        propFile.delete()
     }
 
     /**
