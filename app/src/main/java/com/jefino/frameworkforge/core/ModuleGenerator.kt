@@ -77,6 +77,15 @@ object ModuleGenerator {
                     Shell.cmd("chmod 644 $destPath").exec()
                 }
             }
+            
+            // Process module extras from feature scripts (APKs, XMLs, libs, etc.)
+            val outputDir = patchedJars.values.firstOrNull()?.parentFile
+            val extrasConfig = outputDir?.let { File(it, DiExecutor.MODULE_EXTRAS_CONFIG) }
+            
+            if (extrasConfig != null && extrasConfig.exists()) {
+                log("Processing module extras...")
+                processModuleExtras(extrasConfig, workDir, log)
+            }
 
             // Create the module ZIP
             log("Creating module ZIP...")
@@ -266,4 +275,65 @@ object ModuleGenerator {
     suspend fun moveToDownloads(moduleFile: File): Result<File> {
         return RootManager.moveToDownloads(moduleFile, moduleFile.name)
     }
+    
+    /**
+     * Processes module extras config file and copies files to the module
+     * Config format: type|source_path|dest_path (one per line)
+     * Types: apk, xml, lib, file
+     */
+    private fun processModuleExtras(configFile: File, workDir: File, log: (String) -> Unit) {
+        try {
+            // Read config via root since it's in /data/local/tmp
+            val catResult = Shell.cmd("cat ${configFile.absolutePath}").exec()
+            if (!catResult.isSuccess) {
+                log("Could not read module extras config")
+                return
+            }
+            
+            val lines = catResult.out.filter { it.isNotBlank() }
+            if (lines.isEmpty()) {
+                log("No module extras to process")
+                return
+            }
+            
+            log("Found ${lines.size} module extra(s) to add")
+            
+            for (line in lines) {
+                val parts = line.split("|")
+                if (parts.size < 3) {
+                    log("Invalid config line: $line")
+                    continue
+                }
+                
+                val type = parts[0]
+                val sourcePath = parts[1]
+                val destPath = parts[2]
+                
+                val fullDestPath = "${workDir.absolutePath}/$destPath"
+                val destDir = File(fullDestPath).parent
+                
+                // Create destination directory
+                Shell.cmd("mkdir -p \"$destDir\"").exec()
+                
+                // Copy file
+                val copyResult = Shell.cmd("cp \"$sourcePath\" \"$fullDestPath\"").exec()
+                if (copyResult.isSuccess) {
+                    // Set appropriate permissions based on type
+                    val perm = when (type) {
+                        "apk" -> "644"
+                        "xml" -> "644"
+                        "lib" -> "755"
+                        else -> "644"
+                    }
+                    Shell.cmd("chmod $perm \"$fullDestPath\"").exec()
+                    log("Added $type: $destPath")
+                } else {
+                    log("Failed to add: $destPath - ${copyResult.err.joinToString()}")
+                }
+            }
+        } catch (e: Exception) {
+            log("Error processing module extras: ${e.message}")
+        }
+    }
 }
+

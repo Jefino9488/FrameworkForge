@@ -12,6 +12,9 @@ import java.io.File
 object DiExecutor {
 
     private const val DI_ENVIRONMENT = "/data/local/di/environment"
+    
+    /** Config file for module extras - feature scripts write to this */
+    const val MODULE_EXTRAS_CONFIG = "module_extras.conf"
 
     /**
      * Runs the job's run.sh script with live log streaming.
@@ -89,8 +92,65 @@ object DiExecutor {
             appendLine("mkdir -p \"\$WORK_DIR\"")
             appendLine("mkdir -p \"\$OUTPUT_DIR\"")
             appendLine("")
-
-            // DI Environment setup
+            
+            // Module extras configuration file
+            appendLine("# Module extras config (feature scripts can add files to module)")
+            appendLine("export MODULE_EXTRAS_CONFIG=\"\$OUTPUT_DIR/$MODULE_EXTRAS_CONFIG\"")
+            appendLine("rm -f \"\$MODULE_EXTRAS_CONFIG\"")
+            appendLine("touch \"\$MODULE_EXTRAS_CONFIG\"")
+            appendLine("")
+            
+            // Add the add_to_module shell function
+            appendLine("# Generic function to add files to module")
+            appendLine("# Usage: add_to_module <source_path> <dest_path_in_module> [type]")
+            appendLine("# Types: apk, xml, lib, file (default)")
+            appendLine("# Example: add_to_module \"/tmp/MyApp.apk\" \"system/priv-app/MyApp/MyApp.apk\" \"apk\"")
+            appendLine("add_to_module() {")
+            appendLine("    local src=\"\$1\"")
+            appendLine("    local dest=\"\$2\"")
+            appendLine("    local type=\"\${3:-file}\"")
+            appendLine("    if [ -z \"\$src\" ] || [ -z \"\$dest\" ]; then")
+            appendLine("        echo \"[!] add_to_module: missing source or destination\"")
+            appendLine("        return 1")
+            appendLine("    fi")
+            appendLine("    if [ ! -e \"\$src\" ]; then")
+            appendLine("        echo \"[!] add_to_module: source not found: \$src\"")
+            appendLine("        return 1")
+            appendLine("    fi")
+            appendLine("    echo \"\$type|\$src|\$dest\" >> \"\$MODULE_EXTRAS_CONFIG\"")
+            appendLine("    echo \"[+] Module extra registered: \$dest (\$type)\"")
+            appendLine("    return 0")
+            appendLine("}")
+            appendLine("")
+            appendLine("# Function to extract and add native libs from APK")
+            appendLine("# Usage: add_apk_libs <apk_path> <lib_dest_dir>")
+            appendLine("add_apk_libs() {")
+            appendLine("    local apk=\"\$1\"")
+            appendLine("    local dest_base=\"\$2\"")
+            appendLine("    local extract_dir=\"\$TMP/lib_extract_\$\$\"")
+            appendLine("    create_dir \"\$extract_dir\"")
+            appendLine("    unzip -q -o \"\$apk\" \"lib/*\" -d \"\$extract_dir\" 2>/dev/null || return 0")
+            appendLine("    if [ -d \"\$extract_dir/lib\" ]; then")
+            appendLine("        # Map Android ABI names to Magisk module names")
+            appendLine("        for abi_dir in \"\$extract_dir/lib/\"*; do")
+            appendLine("            [ -d \"\$abi_dir\" ] || continue")
+            appendLine("            local abi=\$(basename \"\$abi_dir\")")
+            appendLine("            local target_abi=\"\$abi\"")
+            appendLine("            case \"\$abi\" in")
+            appendLine("                armeabi-v7a) target_abi=\"arm\" ;;")
+            appendLine("                arm64-v8a) target_abi=\"arm64\" ;;")
+            appendLine("            esac")
+            appendLine("            for so_file in \"\$abi_dir\"/*.so; do")
+            appendLine("                [ -f \"\$so_file\" ] || continue")
+            appendLine("                local so_name=\$(basename \"\$so_file\")")
+            appendLine("                add_to_module \"\$so_file\" \"\$dest_base/lib/\$target_abi/\$so_name\" \"lib\"")
+            appendLine("            done")
+            appendLine("        done")
+            appendLine("        echo \"[+] Native libraries extracted and registered\"")
+            appendLine("    fi")
+            appendLine("    rm -rf \"\$extract_dir\"")
+            appendLine("}")
+            appendLine("")
             appendLine("export DI_BIN=\"/data/tmp/di/bin\"")
             appendLine("export DI_TMP=\"/data/tmp/di\"")
             appendLine("export TMP=\"/data/tmp/di\"")
