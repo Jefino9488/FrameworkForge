@@ -106,6 +106,12 @@ object DiInstaller {
                 cp -f core "$DI_TMP/" 2>/dev/null || true
                 cp -f configs/* "$DI_BIN/" 2>/dev/null || true
                 
+                # Copy baksmali.jar if present (for DEX decompilation)
+                if [ -f "baksmali.jar" ]; then
+                    cp -f "baksmali.jar" "$DI_BIN/"
+                    echo "[DIAG] baksmali.jar copied to bin"
+                fi
+                
                 # Verify critical files
                 echo "[DIAG] DI_BIN contents:"
                 ls "$DI_BIN" 2>/dev/null | head -20

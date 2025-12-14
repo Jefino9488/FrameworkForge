@@ -31,9 +31,7 @@ object SystemInspector {
         val deviceCodename = getSystemProperty("ro.product.device") ?: Build.DEVICE
         val deviceName = getSystemProperty("ro.product.model") ?: Build.MODEL
         val versionName = getSystemProperty("ro.system.build.version.incremental")
-            ?: getSystemProperty("ro.build.display.id")
-            ?: getSystemProperty("ro.build.id")
-            ?: Build.DISPLAY
+            ?: Build.VERSION.INCREMENTAL
 
         val hasFrameworkJar = checkFileExists(FRAMEWORK_JAR_PATH)
         val hasServicesJar = checkFileExists(SERVICES_JAR_PATH)

@@ -120,10 +120,44 @@ fun ConfigScreen(
 
     val enabledFeatures = features.filter { it.isEnabled }
     val featureSummary = FeatureManager.getEnabledFeaturesSummary(features)
+    
+    // For local patching, check required JARs based on selected features
+    // For cloud patching, still require framework.jar and services.jar
+    val requiredJarsForLocal = if (useLocalPatching) {
+        localPatchFeatures.filter { it.isEnabled }
+            .flatMap { it.requiredJars }
+            .distinct()
+            .ifEmpty { listOf("framework.jar") }
+    } else {
+        listOf("framework.jar", "services.jar")
+    }
 
     val canStartPatching = when (patchingMode) {
-        PatchingMode.AUTO_EXTRACT -> isRootAvailable && deviceInfo.hasFrameworkJar && deviceInfo.hasServicesJar
-        PatchingMode.MANUAL_SELECT -> selectedFiles.containsKey("framework.jar") && selectedFiles.containsKey("services.jar")
+        PatchingMode.AUTO_EXTRACT -> {
+            if (useLocalPatching) {
+                // Local patching: check only required JARs from features
+                isRootAvailable && requiredJarsForLocal.all { jar ->
+                    when (jar) {
+                        "framework.jar" -> deviceInfo.hasFrameworkJar
+                        "services.jar" -> deviceInfo.hasServicesJar
+                        "miui-services.jar" -> deviceInfo.hasMiuiServicesJar
+                        else -> true
+                    }
+                }
+            } else {
+                // Cloud patching: requires all standard JARs
+                isRootAvailable && deviceInfo.hasFrameworkJar && deviceInfo.hasServicesJar
+            }
+        }
+        PatchingMode.MANUAL_SELECT -> {
+            if (useLocalPatching) {
+                // Local patching: check only required JARs from features
+                requiredJarsForLocal.all { jar -> selectedFiles.containsKey(jar) }
+            } else {
+                // Cloud patching: requires framework.jar and services.jar
+                selectedFiles.containsKey("framework.jar") && selectedFiles.containsKey("services.jar")
+            }
+        }
     }
 
     Scaffold(
@@ -430,7 +464,24 @@ fun ConfigScreen(
                 Text(
                     text = when {
                         patchingMode == PatchingMode.AUTO_EXTRACT && !isRootAvailable -> "Root access required for auto extraction"
+                        patchingMode == PatchingMode.AUTO_EXTRACT && useLocalPatching -> {
+                            val missingJars = requiredJarsForLocal.filterNot { jar ->
+                                when (jar) {
+                                    "framework.jar" -> deviceInfo.hasFrameworkJar
+                                    "services.jar" -> deviceInfo.hasServicesJar
+                                    "miui-services.jar" -> deviceInfo.hasMiuiServicesJar
+                                    else -> true
+                                }
+                            }
+                            if (missingJars.isNotEmpty()) "${missingJars.joinToString(", ")} not found on device"
+                            else ""
+                        }
                         patchingMode == PatchingMode.AUTO_EXTRACT && !deviceInfo.hasFrameworkJar -> "framework.jar not found on device"
+                        patchingMode == PatchingMode.MANUAL_SELECT && useLocalPatching -> {
+                            val missingJars = requiredJarsForLocal.filterNot { selectedFiles.containsKey(it) }
+                            if (missingJars.isNotEmpty()) "Please select ${missingJars.joinToString(", ")}"
+                            else ""
+                        }
                         patchingMode == PatchingMode.MANUAL_SELECT -> "Please select framework.jar and services.jar"
                         else -> ""
                     },

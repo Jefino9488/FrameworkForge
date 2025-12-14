@@ -71,7 +71,7 @@ class WorkflowRepository {
     }
 
     /**
-     * Find existing releases that match the device
+     * Find existing releases that match the device using ONLY incremental build prop
      */
     suspend fun findMatchingReleases(
         deviceCodename: String,
@@ -86,12 +86,18 @@ class WorkflowRepository {
             if (response.isSuccessful) {
                 val releases = response.body() ?: emptyList()
                 
-                // Find releases matching our device
+                // Release tag format: {codename}_{version}_{timestamp}
+                // Match releases where tag starts with codename_ AND contains version
                 val matchingReleases = releases.filter { release ->
                     val hasModule = release.findModuleZip() != null
-                    val matchesDevice = release.tagName.contains(deviceCodename, ignoreCase = true) ||
-                                       release.tagName.contains(versionSafe.take(16), ignoreCase = true)
-                    hasModule && matchesDevice
+                    val tag = release.tagName
+                    
+                    // Tag must start with codename (codename_version_timestamp format)
+                    val startsWithCodename = tag.startsWith("${deviceCodename}_", ignoreCase = true)
+                    // Tag must also contain the version (after codename_)
+                    val containsVersion = tag.contains(versionSafe.take(20), ignoreCase = true)
+                    
+                    hasModule && startsWithCodename && containsVersion
                 }
                 
                 Result.success(matchingReleases)
@@ -126,12 +132,8 @@ class WorkflowRepository {
         } catch (e: Exception) {
             // Continue anyway
         }
-
-        val tagPatterns = listOf(
-            "${deviceCodename}_${versionSafe}",
-            deviceCodename,
-            versionSafe.take(20)
-        )
+        // Match using codename_version format (workflow creates: codename_version_timestamp)
+        val tagPrefix = "${deviceCodename}_"
 
         repeat(maxAttempts) { attempt ->
             onPoll?.invoke(attempt + 1)
@@ -152,25 +154,29 @@ class WorkflowRepository {
                     }
                     
                     if (newReleases.isNotEmpty()) {
-                        for (pattern in tagPatterns) {
-                            val exactMatch = newReleases.firstOrNull { release ->
-                                release.tagName.contains(pattern, ignoreCase = true)
-                            }
-                            if (exactMatch != null) {
-                                return@withContext Result.success(exactMatch)
-                            }
+                        // Match: tag starts with codename_ AND contains version
+                        val exactMatch = newReleases.firstOrNull { release ->
+                            release.tagName.startsWith(tagPrefix, ignoreCase = true) &&
+                            release.tagName.contains(versionSafe.take(20), ignoreCase = true)
+                        }
+                        if (exactMatch != null) {
+                            return@withContext Result.success(exactMatch)
                         }
                         
-                        val mostRecent = newReleases.firstOrNull()
+                        // Fallback: just matching codename prefix after 3 attempts
+                        val mostRecent = newReleases.firstOrNull { release ->
+                            release.tagName.startsWith(tagPrefix, ignoreCase = true)
+                        }
                         if (mostRecent != null && attempt >= 3) {
                             return@withContext Result.success(mostRecent)
                         }
                     }
                     
+                    // Check all releases for matching tag format
                     val matchingRelease = releases.firstOrNull { release ->
-                        tagPatterns.any { pattern ->
-                            release.tagName.contains(pattern, ignoreCase = true)
-                        } && release.findModuleZip() != null
+                        release.tagName.startsWith(tagPrefix, ignoreCase = true) &&
+                        release.tagName.contains(versionSafe.take(20), ignoreCase = true) &&
+                        release.findModuleZip() != null
                     }
 
                     if (matchingRelease != null) {

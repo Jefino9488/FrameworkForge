@@ -2824,6 +2824,29 @@ run_jar() {
     #Inspired in the osm0sis method
     [ -z "$dalvik_logging" ] && local dalvik_logging=false
     [ -z "$dalvik_memory" ] && local dalvik_memory=800m
+    
+    # Detect OEM ROMs that have modified dalvikvm which crashes with SystemProperties.native_get
+    # These ROMs need app_process instead of bare dalvikvm
+    if [ -z "$DI_USE_APPPROCESS" ]; then
+        # Auto-detect OEM ROMs by checking for their specific properties
+        if getprop ro.miui.ui.version.name 2>/dev/null | grep -q .; then
+            # MIUI / HyperOS detected
+            DI_USE_APPPROCESS=1
+        elif getprop ro.build.flavor 2>/dev/null | grep -qi "hyperos\|coloros\|funtouch\|oneui"; then
+            # Other OEM ROMs detected
+            DI_USE_APPPROCESS=1
+        elif getprop ro.product.brand 2>/dev/null | grep -qi "xiaomi\|redmi\|poco\|oppo\|vivo\|samsung\|huawei\|honor"; then
+            # Known OEM brands that may have modified dalvikvm
+            DI_USE_APPPROCESS=1
+        fi
+    fi
+    
+    # If OEM ROM detected, use app_process instead
+    if [ "$DI_USE_APPPROCESS" = "1" ]; then
+        run_jar_appprocess "$@"
+        return $?
+    fi
+    
     if /system/bin/dalvikvm -showversion >/dev/null 2>&1; then 
        dalvikvm=/system/bin/dalvikvm
     elif dalvikvm -showversion >/dev/null 2>&1; then
@@ -2854,6 +2877,27 @@ run_jar() {
     fi
     shift 1;
     if ! $dalvikvm -Xmx${dalvik_memory,,} -Djava.io.tmpdir=. -Xnodex2oat -cp "$file" $main "$@" 2>/dev/null; then if $dalvik_logging; then $dalvikvm -Xmx${dalvik_memory,,} -Xuse-stderr-logger -Djava.io.tmpdir=. -Xnoimage-dex2oat -cp "$file" $main "$@"; else $dalvikvm -Xmx${dalvik_memory,,} -Djava.io.tmpdir=. -Xnoimage-dex2oat -cp "$file" $main "$@"; fi; fi
+}
+
+# run_jar_appprocess: Alternative to run_jar that uses app_process instead of dalvikvm
+# This is needed for OEM ROMs (HyperOS, MIUI, ColorOS, etc.) that have modified
+# ThreadPoolExecutor with native SystemProperties calls that fail under bare dalvikvm
+run_jar_appprocess() {
+    local file main
+    [ -z "$dalvik_memory" ] && local dalvik_memory=800m
+    
+    file="$1"
+    if [ ! -f "$file" ]; then echo2 "CANT FIND: $file" && return 1; fi
+    
+    main=$(unzip -qp "$file" "META-INF/MANIFEST.MF" 2>/dev/null | grep -m1 "^Main-Class:" | cut -f2 -d: | tr -d " " | dos2unix)
+    if [ -z "$main" ]; then
+       echo2 "Cant get main: $file " && return 1
+    fi
+    shift 1;
+    
+    # Use app_process which properly loads Android runtime with native libraries
+    export CLASSPATH="$file"
+    /system/bin/app_process -Xmx${dalvik_memory,,} /system/bin "$main" "$@"
 }
 
 run_jar_addon() {
