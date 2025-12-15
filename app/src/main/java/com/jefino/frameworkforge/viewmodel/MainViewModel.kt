@@ -801,11 +801,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 addLog(LogTag.MODULE, "Building Magisk module...")
 
+                // Pass the job output directory where module_extras.conf is located
+                val jobOutputDirFile = File(jobDir, "output")
+                
                 val moduleResult = ModuleGenerator.generateModule(
                     context = context,
                     patchedJars = patchedJars,
                     deviceCodename = info.deviceCodename,
-                    androidVersion = info.androidVersion
+                    androidVersion = info.androidVersion,
+                    jobOutputDir = jobOutputDirFile
                 ) { msg ->
                     viewModelScope.launch { addLog(LogTag.MODULE, msg) }
                 }

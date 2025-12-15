@@ -33,6 +33,7 @@ object ModuleGenerator {
         patchedJars: Map<String, File>,
         deviceCodename: String,
         androidVersion: String,
+        jobOutputDir: File? = null,  // Job output directory containing module_extras.conf
         log: (String) -> Unit
     ): Result<File> = withContext(Dispatchers.IO) {
         try {
@@ -79,12 +80,24 @@ object ModuleGenerator {
             }
             
             // Process module extras from feature scripts (APKs, XMLs, libs, etc.)
-            val outputDir = patchedJars.values.firstOrNull()?.parentFile
-            val extrasConfig = outputDir?.let { File(it, DiExecutor.MODULE_EXTRAS_CONFIG) }
+            // Use jobOutputDir if provided, otherwise try to derive from patchedJars
+            val extrasDir = jobOutputDir ?: patchedJars.values.firstOrNull()?.parentFile
+            val extrasConfigPath = extrasDir?.let { "${it.absolutePath}/${DiExecutor.MODULE_EXTRAS_CONFIG}" }
             
-            if (extrasConfig != null && extrasConfig.exists()) {
-                log("Processing module extras...")
-                processModuleExtras(extrasConfig, workDir, log)
+            log("DEBUG: extrasDir = ${extrasDir?.absolutePath}")
+            log("DEBUG: extrasConfigPath = $extrasConfigPath")
+            
+            // Use shell to check file existence since it's in a root-owned directory
+            if (extrasConfigPath != null) {
+                val checkResult = Shell.cmd("[ -f '$extrasConfigPath' ] && echo 'exists' || echo 'not_found'").exec()
+                log("DEBUG: file check result = ${checkResult.out.joinToString()}")
+                
+                if (checkResult.out.any { it.contains("exists") }) {
+                    log("Processing module extras...")
+                    processModuleExtras(File(extrasConfigPath), workDir, log)
+                } else {
+                    log("DEBUG: module_extras.conf not found, skipping extras")
+                }
             }
 
             // Create the module ZIP
@@ -279,7 +292,7 @@ object ModuleGenerator {
     /**
      * Processes module extras config file and copies files to the module
      * Config format: type|source_path|dest_path (one per line)
-     * Types: apk, xml, lib, file
+     * Types: apk, xml, lib, props, file
      */
     private fun processModuleExtras(configFile: File, workDir: File, log: (String) -> Unit) {
         try {
@@ -309,6 +322,18 @@ object ModuleGenerator {
                 val sourcePath = parts[1]
                 val destPath = parts[2]
                 
+                // Special handling for props - append to system.prop instead of copying
+                if (type == "props") {
+                    val systemPropPath = "${workDir.absolutePath}/system.prop"
+                    val appendResult = Shell.cmd("cat \"$sourcePath\" >> \"$systemPropPath\"").exec()
+                    if (appendResult.isSuccess) {
+                        log("Appended props to system.prop")
+                    } else {
+                        log("Failed to append props: ${appendResult.err.joinToString()}")
+                    }
+                    continue
+                }
+                
                 val fullDestPath = "${workDir.absolutePath}/$destPath"
                 val destDir = File(fullDestPath).parent
                 
@@ -336,4 +361,3 @@ object ModuleGenerator {
         }
     }
 }
-
