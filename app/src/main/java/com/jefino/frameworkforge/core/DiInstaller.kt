@@ -69,6 +69,13 @@ object DiInstaller {
                     cp -f "arch/${'$'}ARCH/busybox" "$DI_BIN/busybox"
                     chmod 755 "$DI_BIN/busybox"
                     
+                    # Copy zipalign directly (bypass unzip issues)
+                    if [ -f "arch/${'$'}ARCH/zipalign" ]; then
+                        cp -f "arch/${'$'}ARCH/zipalign" "$DI_BIN/zipalign"
+                        chmod 755 "$DI_BIN/zipalign"
+                        echo "[DIAG] zipalign copied directly"
+                    fi
+                    
                     # Install busybox applets
                     cd "$DI_BIN"
                     ./busybox --install -s . 2>/dev/null || {
@@ -96,33 +103,10 @@ object DiInstaller {
                 # Extract arch-specific binaries (bash, aapt, zip, zipalign)
                 if [ -f "arch/${'$'}ARCH/bin" ]; then
                     echo "[DIAG] Extracting arch bin..."
-                    ARCH_EXTRACTED=false
-                    
-                    # Try busybox unzip first
                     if [ -x "$DI_BIN/unzip" ]; then
-                        if "$DI_BIN/unzip" -qo "arch/${'$'}ARCH/bin" -d "$DI_BIN" 2>/dev/null; then
-                            echo "[DIAG] arch bin extracted (busybox)"
-                            ARCH_EXTRACTED=true
-                        else
-                            echo "[DIAG] busybox unzip failed for arch bin, trying system unzip..."
-                        fi
-                    fi
-                    
-                    # Fallback to system unzip if busybox failed or wasn't available
-                    if [ "${'$'}ARCH_EXTRACTED" = "false" ]; then
-                        if unzip -qo "arch/${'$'}ARCH/bin" -d "$DI_BIN" 2>/dev/null; then
-                            echo "[DIAG] arch bin extracted (system)"
-                            ARCH_EXTRACTED=true
-                        else
-                            echo "[DIAG] system unzip also failed for arch bin"
-                            # Last resort: try toybox/toolbox unzip
-                            if /system/bin/unzip -qo "arch/${'$'}ARCH/bin" -d "$DI_BIN" 2>/dev/null; then
-                                echo "[DIAG] arch bin extracted (toybox)"
-                                ARCH_EXTRACTED=true
-                            else
-                                echo "[DIAG] ERROR: All unzip methods failed for arch bin!"
-                            fi
-                        fi
+                        "$DI_BIN/unzip" -qo "arch/${'$'}ARCH/bin" -d "$DI_BIN" 2>/dev/null && echo "[DIAG] arch bin extracted (busybox)" || echo "[DIAG] busybox unzip failed for arch bin"
+                    else
+                        unzip -qo "arch/${'$'}ARCH/bin" -d "$DI_BIN" 2>/dev/null && echo "[DIAG] arch bin extracted (system)" || echo "[DIAG] system unzip failed for arch bin"
                     fi
                 fi
                 
@@ -166,9 +150,9 @@ object DiInstaller {
                 fi
                 
                 if [ -x "$DI_BIN/zipalign" ]; then
-                    echo "[DIAG] zipalign FOUND and executable"
+                    echo "[DIAG] zipalign FOUND"
                 else
-                    echo "[DIAG] zipalign NOT FOUND - signature preservation won't work"
+                    echo "[DIAG] zipalign NOT FOUND"
                 fi
             '
         """.trimIndent()

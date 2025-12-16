@@ -48,8 +48,8 @@ decompile_jar() {
     
     echo "[*] Decompiling $jar_name..."
     
-    # Use dynamic_apktool to decompile
-    if dynamic_apktool -decompile "$jar_path" -o "$workspace_dir"; then
+    # Use dynamic_apktool to decompile with signature preservation
+    if dynamic_apktool -decompile "$jar_path" -o "$workspace_dir" -ps; then
         WORKSPACE_PATHS[$jar_name]="$workspace_dir"
         WORKSPACE_MODIFIED[$jar_name]=0
         echo "[+] Decompiled $jar_name to workspace: $workspace_dir"
@@ -138,8 +138,8 @@ recompile_all() {
         sync
         echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
         
-        # Use dynamic_apktool to recompile with limited threads (-j) to prevent OOM
-        if dynamic_apktool -recompile "$workspace" -o "$jar_path" -j 2; then
+        # Use dynamic_apktool to recompile with limited threads (-j) and preserve signature (-ps)
+        if dynamic_apktool -recompile "$workspace" -o "$jar_path" -j 2 -ps; then
             echo "[+] Successfully recompiled $jar_name"
             ((recompiled_count++))
         else
