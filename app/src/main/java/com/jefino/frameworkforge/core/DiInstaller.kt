@@ -36,6 +36,9 @@ object DiInstaller {
 
         // Copy META-INF from assets
         copyFolderFromAssets(context, "di/META-INF", "$DI_ROOT/META-INF")
+        
+        // Copy smali_workspace.sh (it's at di/ root, not inside META-INF)
+        copyFileFromAssets(context, "di/smali_workspace.sh", "$DI_ROOT/smali_workspace.sh")
         log("Copied DI assets.")
 
         // Make everything executable
@@ -105,6 +108,16 @@ object DiInstaller {
                 # Copy core and configs
                 cp -f core "$DI_TMP/" 2>/dev/null || true
                 cp -f configs/* "$DI_BIN/" 2>/dev/null || true
+                
+                # Copy smali_workspace.sh library (for centralized JAR decompilation)
+                # Note: smali_workspace.sh is at $DI_ROOT/../smali_workspace.sh (copied by copyFolderFromAssets to /data/local/di/)
+                if [ -f "/data/local/di/smali_workspace.sh" ]; then
+                    cp -f "/data/local/di/smali_workspace.sh" "$DI_TMP/"
+                    chmod 755 "$DI_TMP/smali_workspace.sh"
+                    echo "[DIAG] smali_workspace.sh copied from di root"
+                else
+                    echo "[DIAG] WARNING: smali_workspace.sh not found at /data/local/di/"
+                fi
                 
                 # Copy baksmali.jar if present (for DEX decompilation)
                 if [ -f "baksmali.jar" ]; then
@@ -189,5 +202,16 @@ object DiInstaller {
                 tmp.delete()
             }
         }
+    }
+
+    private fun copyFileFromAssets(context: Context, src: String, dst: String) {
+        val name = src.substringAfterLast("/")
+        val tmp = File.createTempFile("di_", name, context.cacheDir)
+        context.assets.open(src).use { input ->
+            tmp.outputStream().use { output -> input.copyTo(output) }
+        }
+        Shell.cmd("cp ${tmp.absolutePath} $dst").exec()
+        Shell.cmd("chmod 755 $dst").exec()
+        tmp.delete()
     }
 }

@@ -15,3 +15,8 @@
 local.properties
 .kotlin/
 digest.txt
+/docs/
+/smali_analysis/
+/baksmali_build/
+/test_env/
+.vscode/*

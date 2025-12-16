@@ -159,8 +159,56 @@ object DiExecutor {
             appendLine("export l=\"\$DI_BIN\"")
 
             appendLine("if [ -f \"\$DI_TMP/core\" ]; then . \"\$DI_TMP/core\"; else echo '[!] DI Core missing'; fi")
+            
+            // Source the workspace management library
+            appendLine("")
+            appendLine("# Source workspace management library")
+            appendLine("if [ -f \"\$DI_TMP/smali_workspace.sh\" ]; then")
+            appendLine("    . \"\$DI_TMP/smali_workspace.sh\"")
+            appendLine("else")
+            appendLine("    echo '[!] ERROR: smali_workspace.sh not found'")
+            appendLine("    exit 1")
+            appendLine("fi")
+            appendLine("")
+            
+            // Initialize workspace system
+            appendLine("# Initialize workspace system")
+            appendLine("init_workspace")
+            appendLine("")
+            
+            // Phase 1: Decompile all required JARs upfront
+            appendLine("# Phase 1: Decompile all required JARs")
+            appendLine("echo '[*] Decompiling JARs...'")
+            inputFiles.forEach { (name, path) ->
+                val envVar = when(name) {
+                    "framework.jar" -> "FRAMEWORK_JAR"
+                    "services.jar" -> "SERVICES_JAR"
+                    "miui-services.jar" -> "MIUI_SERVICES_JAR"
+                    else -> ""
+                }
+                if (envVar.isNotEmpty()) {
+                    appendLine("decompile_jar \"$name\" \"\$$envVar\"")
+                }
+            }
+            appendLine("")
+            
+            // Export workspace paths for convenience
+            appendLine("# Export workspace paths for feature scripts")
+            inputFiles.keys.forEach { name ->
+                val envVar = when(name) {
+                    "framework.jar" -> "FRAMEWORK_WORKSPACE"
+                    "services.jar" -> "SERVICES_WORKSPACE"
+                    "miui-services.jar" -> "MIUI_SERVICES_WORKSPACE"
+                    else -> ""
+                }
+                if (envVar.isNotEmpty()) {
+                    appendLine("export $envVar=\$(get_workspace_path \"$name\")")
+                }
+            }
+            appendLine("")
 
-            // 1. Calculate initial checksums
+            // Calculate initial checksums
+            appendLine("# Calculate initial checksums")
             appendLine("echo '[*] Calculating initial checksums...'")
             inputFiles.keys.forEach { name ->
                 val envVar = when(name) {
@@ -185,7 +233,18 @@ object DiExecutor {
             }
             appendLine("")
 
-            // 3. Verify modifications and copy to output
+            // Phase 3: Recompile all modified workspaces
+            appendLine("# Phase 3: Recompile all modified JARs")
+            appendLine("echo '[*] Recompiling modified JARs...'")
+            appendLine("if ! recompile_all; then")
+            appendLine("    echo '[!] ERROR: Recompilation failed'")
+            appendLine("    cleanup_workspaces")
+            appendLine("    exit 1")
+            appendLine("fi")
+            appendLine("")
+
+            // Verify modifications and copy to output
+            appendLine("# Verify modifications and copy to output")
             appendLine("echo '[*] Verifying patches...'")
             inputFiles.keys.forEach { name ->
                 val envVar = when(name) {
@@ -209,6 +268,11 @@ object DiExecutor {
                     appendLine("fi")
                 }
             }
+            
+            // Cleanup workspaces
+            appendLine("")
+            appendLine("# Cleanup workspaces")
+            appendLine("cleanup_workspaces")
 
             appendLine("echo '[*] Job finished'")
             appendLine("exit 0")
